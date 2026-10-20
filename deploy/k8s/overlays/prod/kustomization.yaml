@@ -17,12 +17,15 @@ resources:
   - ../../base
   - ingress.yaml
 
-# 副本数：无状态服务（web / interaction / feed / search）可安全跑 2 副本做滚动更新零停机。
-# gateway / user / video 因共用 RWO 上传卷、被钉在同一节点（node-2），2 副本既无法跨节点高可用、
-# 又会挤爆单台 2C 机器的 CPU requests，故固定 1 副本（横向扩容的前提是换 RWX 存储 + 去掉节点 pin）。
+# 副本数：全部 1。
+# 本项目定位是单机规模上线，中间件（MySQL / Redis / Etcd / Kafka）均为单实例，
+# 应用层配多副本并不能消除单点——中间件一挂全站照样停，只是白占资源
+# （web/interaction/feed/search 各 2 副本会多吃约 620m CPU / 800Mi 内存）。
+# 代价：发版滚动更新期间入口会有几秒中断，可接受。
+# 想恢复零停机滚动更新时，把无状态服务（web/interaction/feed/search）调回 2 即可。
 replicas:
   - name: web
-    count: 2
+    count: 1
   - name: gateway
     count: 1
   - name: user
@@ -30,11 +33,11 @@ replicas:
   - name: video
     count: 1
   - name: interaction
-    count: 2
+    count: 1
   - name: feed
-    count: 2
+    count: 1
   - name: search
-    count: 2
+    count: 1
   - name: transcode-worker
     count: 1
 
@@ -115,7 +118,11 @@ patches:
           limits:
             cpu: "1"
             memory: 1Gi
-  # 转码 Worker 是 CPU 密集型，单独保留高 CPU 档（避免被上面的通用 patch 压低）
+  # 转码 Worker 是 CPU 密集型，单独保留高 limits（避免被上面的通用 patch 压低）。
+  # requests 只给 250m：它是突发型负载，1 核的「预留」会把 node-2 挤爆——
+  # node-2 同时承载 ES(100m)+Kafka(300m)+gateway/user/feed(各 200m)+video(200m)，
+  # 加上转码的 1000m 正好超出 2 核可分配量，video 会永久 Pending。
+  # limits 保持 4 核：真正转码时仍能跑满，只是不再向调度器「霸占」额度。
   - target:
       kind: Deployment
       name: transcode-worker
@@ -124,7 +131,7 @@ patches:
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
-            cpu: "1"
+            cpu: 250m
             memory: 512Mi
           limits:
             cpu: "4"

@@ -37,8 +37,17 @@ resources:
   - redis.yaml
   - etcd.yaml
   - kafka.yaml
-  # MinIO 只有 upload.driver=minio 时才需要；默认 local 驱动下它只是空转。
-  # 内存紧张（比如 2C4G 单机）可以把这一行注释掉。
-  - minio.yaml
-  # 检索索引：不启用 ES（search.es.enabled=false）时可以去掉这一行。
+  # MinIO 只有 upload.driver=minio 时才需要。当前生产是 upload.driver=local，
+  # 它跑着也不会有任何读写，白占 100m CPU / 256Mi 内存。
+  # 将来要切对象存储：取消下面这行注释 + 改 config 的 upload.driver=minio，再 apply。
+  # - minio.yaml
+  # Elasticsearch：生产已启用（prod/config.yaml 里 search.es.enabled=true），
+  # 关键词检索走 ES 索引（分词 + 相关度排序），索引由 Kafka 事件维护。
+  # 若将来要关掉：注释本行 + 把 config 的 search.es.enabled 改回 false，
+  # 搜索会自动退回视频库的 LIKE，功能不中断。
   - elasticsearch.yaml
+  #
+  # ⚠️ 注释掉只是「以后不再 apply」，**不会删除已存在的 StatefulSet**，需手工清理一次。
+  # 当前只注释了 minio，清理它时执行：
+  #   kubectl -n chuangyue delete statefulset minio
+  #   kubectl -n chuangyue delete pvc data-minio-0

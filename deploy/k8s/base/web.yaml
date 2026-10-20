@@ -35,7 +35,10 @@ spec:
           command:
             - sh
             - -c
-            - until getent hosts gateway >/dev/null 2>&1; do echo "等待网关 Service 就绪..."; sleep 2; done
+            # 必须用 FQDN：busybox 的 nslookup 不会套用 /etc/resolv.conf 里的 search 域，
+            # 单标签名 `gateway` 会被当成绝对域名去查，CoreDNS 直接回 NXDOMAIN → 死循环。
+            # （busybox 也没有 getent，用它同样起不来。）namespace 与 kustomization 保持一致。
+            - until nslookup gateway.chuangyue.svc.cluster.local >/dev/null 2>&1; do echo "等待网关 Service 就绪..."; sleep 2; done
           resources:
             requests:
               cpu: 10m

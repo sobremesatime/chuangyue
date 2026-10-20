@@ -111,6 +111,18 @@ kafka:
 etcd:
   endpoints: ["etcd:2379"]
 
+# 检索后端：开启后关键词查询走 ES 索引（分词 + 相关度排序），索引由 Kafka 的
+# chuangyue.video.index 事件维护；ES 不可用或索引为空时自动退回视频库的 LIKE。
+# 地址是 infra 里的 headless Service（deploy/k8s/infra/elasticsearch.yaml）。
+search:
+  es:
+    enabled: true
+    addresses: ["http://elasticsearch:9200"]
+    index: chuangyue_videos
+    username: ""
+    password: ""
+    timeout: 3s
+
 ratelimit:
   enabled: true
   ip_per_second: 20
