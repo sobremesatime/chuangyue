@@ -8,7 +8,7 @@
 # 本脚本把这一步固定下来：给一个标签，它把 8 个 Deployment 切过去并等它们就绪。
 #
 # 用法（需要你已获授权的 kubectl 访问；脚本自身不申请任何权限）：
-#   ./rollout.sh 1.0.0                          # 全部服务切到 ghcr.io/<owner>/chuangyue-app/*:1.0.0
+#   ./rollout.sh 1.0.0                          # 全部服务切到 ghcr.io/<owner>/chuangyue/*:1.0.0
 #   IMAGE_TAG=sha-1a2b3c4 ./rollout.sh          # 回滚 / 灰度常用 sha- 标签，也可用环境变量给
 #   ./rollout.sh dev                            # dev 分支的镜像标签
 #   SERVICES="video gateway" ./rollout.sh 1.0.0 # 只更新指定服务（留空 = 全部 8 个）
@@ -16,7 +16,7 @@
 #
 # 环境变量（均有默认值，按需覆盖）：
 #   IMAGE_TAG         镜像标签（也可作为第一个位置参数传入）   默认 latest
-#   IMAGE_REGISTRY    镜像仓库前缀                            默认 ghcr.io/sobremesatime/chuangyue-app
+#   IMAGE_REGISTRY    镜像仓库前缀                            默认 ghcr.io/sobremesatime/chuangyue
 #   K8S_NAMESPACE     命名空间                                默认 chuangyue
 #   SERVICES          只更新的服务（空格分隔）                  默认空 = 全部
 #   ROLLOUT_TIMEOUT   单个 Deployment 等待就绪的上限            默认 300s
@@ -35,7 +35,7 @@
 set -euo pipefail
 
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/sobremesatime/chuangyue-app}"
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/sobremesatime/chuangyue}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-chuangyue}"
 SERVICES="${SERVICES:-}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300s}"

@@ -8,11 +8,7 @@ name: Release Images
 #   - 手动触发（workflow_dispatch）-> 同样按分支规则出标签
 #
 # 凭据：仅用 Actions 内置的 GITHUB_TOKEN，无需额外 Secret（见 packages: write）。
-# 镜像地址：ghcr.io/<owner>/chuangyue-app/<service>，与 overlays 里的 newName 一致。
-# 为什么是 chuangyue-app 而不是 chuangyue：仓库曾删库重建，旧的 chuangyue/<service> 包名
-# 被残留的孤儿包（网页可见、点开 404、API 查不到）占住，导致 GITHUB_TOKEN 推送时
-# 报 permission_denied: write_package。换一个未被占用的包名是最直接的解法，且当时集群尚未部署，
-# 没有任何迁移成本。
+# 镜像地址：ghcr.io/<owner>/chuangyue/<service>，与 overlays 里的 newName 一致。
 
 on:
   push:
@@ -22,7 +18,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAMESPACE: ${{ github.repository_owner }}/chuangyue-app
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}/chuangyue
 
 permissions:
   contents: read
