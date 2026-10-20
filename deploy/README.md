@@ -6,17 +6,17 @@
 | `docker/` | 服务镜像：一个多阶段 `Dockerfile`，用 build arg `SERVICE` 选择要构建的 `cmd/` 子目录 |
 | `nginx/` | 接入层：`nginx.conf`（前端静态 + `/api` 反代）与前端镜像 `Dockerfile`（构建出 `chuangyue/web`） |
 | `k8s/base/` | K8s 基础清单（Kustomize）：接入层 + 应用 7 个进程的 Deployment / Service / ConfigMap / PVC；Secret 不入清单（只有 `secret.yaml.example` 模板） |
-| `k8s/infra/` | 自建中间件（**Etcd 必建**）：MySQL / Redis / Etcd / Kafka / MinIO 的单实例 StatefulSet；MySQL / Redis / Kafka / MinIO 可用云托管替代，但 **Etcd 没有云托管等价物，必须自建** |
+| `k8s/infra/` | 自建中间件：MySQL / Redis / Etcd / Kafka / MinIO 的单实例 StatefulSet（全部自建，Etcd 是服务发现中心、缺一不可） |
 | `k8s/overlays/` | 按环境覆盖：`dev`（单副本、tag=dev）、`prod`（多副本、prod 配置、资源抬高、Ingress→web、k3s 本地卷适配） |
-| `k8s/backup/` | 可选的集群内定时备份：CronJob + 归档 PVC + 备份脚本；用云托管数据库或备份由云商负责时整个目录不 apply |
+| `k8s/backup/` | 集群内定时备份：CronJob + 归档 PVC + 备份脚本（自建 MySQL 没有自动备份，靠它兜底） |
 | `monitoring/` | 监控栈：Prometheus 抓取配置 + 告警规则（`alerts.yml`）+ Alertmanager 配置 + Grafana 数据源与两块看板（compose `monitoring` profile） |
 | `scripts/` | 部署辅助脚本：`bootstrap-k8s.sh`（k8s 首次初始化：命名空间 → Secret → 中间件 → 灌库，带 `--dry-run` 与逐步确认）、`backup.sh`（宿主机侧备份：业务库 + 上传目录，含保留期清理）、`rollout.sh`（镜像推送后的滚动更新与回滚） |
 
 ## 集群：Kustomize 部署
 
 应用清单只编排**接入层 + 应用进程**（`web` / `gateway` / 五个服务 / 转码 Worker）。
-MySQL / Redis / Kafka / MinIO **可以托管也可以自建**（用托管时不碰 `k8s/infra/`，只要集群内有同名 Service）；
-但 **Etcd 必须自建**——它是服务注册与发现的中心，云上没有等价托管物。自建时 `kubectl apply -k deploy/k8s/infra` 起一整套。
+中间件（MySQL / Redis / Etcd / Kafka / MinIO）**全部自建**，统一用 `kubectl apply -k deploy/k8s/infra` 起一整套单实例 StatefulSet；
+其中 **Etcd 是服务注册与发现的中心**，缺了它服务注册不上、网关发现不到后端，必须最先确保就绪。
 
 首次部署的顺序是 **Secret → 中间件 → 建表 → 应用**，完整命令（含 Secret 怎么生成、
 `migrations` 怎么灌库）见 [`k8s/README.md`](k8s/README.md#部署首次按顺序执行)——那几步漏一步都起不来。
@@ -116,4 +116,4 @@ docker run --rm -v "$PWD:/restore" alpine tar -xz -f /restore/uploads-20261016-0
 
 - 镜像统一多阶段构建，最终镜像基于 `alpine` 或 `distroless`。
 - 配置通过 ConfigMap、敏感信息通过 Secret 注入，不写死在镜像里。
-- 集群方案（云服务器选购、k3s 部署分阶段清单）见本地 `docs/云服务器集群方案.md`——按约定该目录不入库。
+- 节点规划与分阶段部署清单见本地 `docs/部署计划.md`——按约定该目录不入库。

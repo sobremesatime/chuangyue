@@ -209,8 +209,9 @@ func (r *Repository) UpdateTranscodeResult(ctx context.Context, id int64, playUR
 
 // Delete 按主键物理删除视频记录。
 //
-// 当前版本没有评论、点赞等关联表，删掉视频不会留下悬空引用；
-// 后续版本若引入关联数据，这里需要改成事务内级联清理。
+// 关联数据（评论 / 点赞 / 收藏 / 弹幕 / 历史）已拆入独立库 chuangyue_interaction，
+// 由视频域投递 chuangyue.video.deleted 事件、互动域异步清理（PurgeService.HandleVideoDeleted），
+// 所以这里只做物理删除、不级联：互动表不在本库，级联反而越界。
 func (r *Repository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Delete(&model.Video{}, id).Error
 }

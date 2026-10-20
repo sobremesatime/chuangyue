@@ -1,6 +1,6 @@
 # 窗月 · 集群内定时备份（可选目录）
 #
-# 独立于 base / infra 的可选套件：用云托管数据库、或备份由云商负责时，整目录不用 apply。
+# 独立于 base / infra 的可选套件：自建 MySQL 没有自动备份，本目录的 CronJob 是兜底手段。
 # 内容：备份归档卷（pvc.yaml）+ 备份脚本（configMapGenerator 生成 chuangyue-backup-script）+
 # 定时任务（cronjob.yaml）。
 #

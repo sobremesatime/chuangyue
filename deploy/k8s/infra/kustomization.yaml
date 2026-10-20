@@ -1,21 +1,21 @@
-# 窗月 · 自建中间件（**Etcd 必建**，MySQL / Redis / Kafka / MinIO 可托管）
+# 窗月 · 自建中间件（MySQL / Redis / Etcd / Kafka / MinIO 全部自建）
 #
-# 用途：给**自建集群**（如 3 节点 k3s）准备 MySQL / Redis / Etcd / Kafka / MinIO / Elasticsearch。
-# 除 Etcd 外，这些依赖可以用云托管（RDS / Redis / Kafka / OSS / 托管 ES 等）：托管时不必 apply 对应清单，
-# 只要保证集群里存在同名 Service 即可。**但 Etcd 云上没有等价托管物、必须自建**——缺了它各服务注册不上、
-# 网关发现不到后端，所以托管形态下**至少要把本目录的 `etcd` 留下**（见 ../README.md「范围」）。
+# 用途：给**自建集群**（3 节点 k3s）准备 MySQL / Redis / Etcd / Kafka / MinIO / Elasticsearch。
+# 它们全部由本目录的清单自建承载，不依赖任何云托管中间件（RDS / 云 Redis / 云 Kafka / OSS 等）。
+# 其中 **Etcd 是服务注册与发现的中心**——缺了它各服务注册不上、网关发现不到后端，
+# 因此它是必须最先确保就绪的一项。
 #
 # Elasticsearch 是可选的检索后端：不部署时搜索服务会自动退回视频服务的库内 LIKE，
 # 只是失去相关度排序与中文短语匹配。内存紧张的单机可以把它从 resources 里去掉。
 #
 # 为什么单独成一个 kustomization 而不是并进 base：
-#   - 托管与自建是两种部署形态，混在一起会让「用托管」的人也被迫看一堆中间件清单；
+#   - 应用与中间件关注点不同：应用是业务逻辑、中间件是基础设施，分开更清晰；
 #   - 应用清单和中间件清单的发布节奏不同（应用天天发，中间件半年不动）。
 #
 # 存储：全部用**集群默认 StorageClass**（k3s 自带 local-path）。
 # 单实例 StatefulSet + 节点本地卷意味着「Pod 迁到别的节点就看不到旧数据」——
 # 这是刻意接受的最小成本方案：演示集群的中间件本来就没打算跨节点漂移。
-# 要更强的可用性，请换成云托管或改用带副本的 Operator。
+# 要更强的可用性，请改用带副本的 Operator。
 #
 # 容量声明（mysql 10Gi / redis 2Gi / etcd 2Gi / kafka 5Gi / minio 20Gi / es 10Gi）是**逻辑预留**：
 # local-path 只会在节点上建目录、不校验容量，所以磁盘 60G 的演示机也能跑起来；

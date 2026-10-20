@@ -1,8 +1,8 @@
 # 窗月 · 集群内定时备份（CronJob）
 #
 # 为什么放在独立的 backup/ 目录、而不是进 base/prod overlay：备份是**生产运维动作**，且它要挂
-# 上传卷（RWO，必须与业务 Pod 同节点）。做成可选目录后，用云托管数据库、或备份由云商负责的部署
-# 可以**整目录不 apply**——与 infra/ 同一套取舍（见 deploy/k8s/README.md）。
+# 上传卷（RWO，必须与业务 Pod 同节点）。单独成目录是为了与 base/prod overlay 解耦：
+# 备份属生产运维动作、发布节奏与业务不同，可独立感知、独立启停（见 deploy/k8s/README.md）。
 #
 # 用法（在仓库根目录）：
 #   kubectl apply -k deploy/k8s/backup                    # 建 PVC + 脚本 ConfigMap + CronJob

@@ -237,7 +237,7 @@ if [[ "$WITH_INFRA" == 1 ]]; then
     run kubectl apply -k "$REPO_ROOT/deploy/k8s/infra"
   fi
 else
-  log "未加 --with-infra，跳过（用云托管时本就不 apply infra，只要集群内存在同名 Service）"
+  log "未加 --with-infra，跳过中间件安装（注意：本项目中间件全自建，首次部署建议带上 --with-infra）"
 fi
 
 # ---------- 阶段 4 · 灌库 ----------

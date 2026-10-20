@@ -18,7 +18,7 @@ deploy/k8s/
 │   ├── feed.yaml             # :9104
 │   ├── search.yaml           # :9105
 │   └── transcode-worker.yaml # 无端口，消费 Kafka
-├── infra/                    # 自建中间件（**Etcd 必建**；MySQL/Redis/Kafka/MinIO 可托管）
+├── infra/                    # 自建中间件（MySQL / Redis / Etcd / Kafka / MinIO，全部自建）
 │   ├── kustomization.yaml
 │   └── mysql.yaml / redis.yaml / etcd.yaml / kafka.yaml / minio.yaml
 ├── backup/                   # 可选：集群内定时备份（CronJob + 归档 PVC + 备份脚本）
@@ -47,12 +47,10 @@ deploy/k8s/
 ## 范围：应用清单 + 可选的中间件清单
 
 `base` + `overlays` 只编排 **8 个应用进程**（web / gateway / 五个服务 / 转码 Worker）。
-**MySQL / Redis / Etcd / Kafka / MinIO / Elasticsearch 不在 base 里**——它们可以托管，也可以自建：
-
-- **用云托管**（RDS / 云 Redis / 云 Kafka / OSS / 托管 ES）：其余四项可托管，只要集群内存在下表同名 Service；
-  但 **Etcd 是例外——云上没有等价托管物，必须自建**（apply `infra/` 里的 `etcd`，或自行部署 Etcd 并建同名 Service）；
-- **自建**（如 3 节点 k3s）：`kubectl apply -k deploy/k8s/infra` 起一整套单实例中间件
-  （详见该目录的 `kustomization.yaml` 文件头，含「单实例接受哪些代价」的说明）。
+**MySQL / Redis / Etcd / Kafka / MinIO / Elasticsearch 不在 base 里，全部自建**：
+`kubectl apply -k deploy/k8s/infra` 起一整套单实例中间件
+（详见该目录的 `kustomization.yaml` 文件头，含「单实例接受哪些代价」的说明）。
+其中 **Etcd 是服务注册与发现的中心**，缺了它各服务注册不上、网关发现不到后端，必须最先确保就绪。
 
 集群内必须存在同名 Service（名字与 `base/config.yaml` 里的 `host` 一致）：
 
@@ -60,7 +58,7 @@ deploy/k8s/
 |---|---|---|
 | MySQL | `mysql` | `chuangyue` 库（用户 / 视频）+ `chuangyue_interaction` 库（互动） |
 | Redis | `redis` | 验证码、令牌、推荐缓存、限流计数、刷新令牌重放标记 |
-| Etcd | `etcd` | 服务注册与发现（**必需**）；云上无等价托管，**必须自建**——缺了它各服务注册不上、网关发现不到后端 |
+| Etcd | `etcd` | 服务注册与发现（**必需**，自建）——缺了它各服务注册不上、网关发现不到后端 |
 | Kafka | `kafka` | **功能必需**：转码任务、互动计数回写、视频索引事件（producer 惰性连接，缺了不崩但会静默不转码、索引滞后） |
 | MinIO | `minio` | 仅在 `upload.driver=minio` 时需要 |
 | Elasticsearch | `elasticsearch` | 仅在 `search.es.enabled=true` 时需要；不可用时检索退回库内 LIKE |
@@ -137,7 +135,7 @@ kubectl -n chuangyue create secret generic chuangyue-secrets \
   --from-literal=CHUANGYUE_UPLOAD_MINIO_SECRET_KEY="$(openssl rand -base64 32)" \
   --from-literal=CHUANGYUE_MAIL_PASSWORD='<服务商 API Key>'
 
-# 2) 中间件（自建才需要；用云托管时只要保证同名 Service 存在）
+# 2) 中间件（全部自建）
 kubectl apply -k deploy/k8s/infra
 kubectl -n chuangyue get pods -w        # 等 mysql / redis / etcd / kafka / minio 全部 Ready
 
@@ -215,7 +213,7 @@ kubectl -n chuangyue create job --from=cronjob/chuangyue-backup backup-manual   
   用真正的 RWX 存储时删掉该项即可。
 - **它不负责异地化**：归档与数据同盘，盘坏一起没——仍需另配一步 rsync / ossutil 搬到对象存储。
 
-> 用云托管数据库、或备份由云商负责时，**整个 `backup/` 目录不 apply**（与 `infra/` 同一套取舍）。
+> 自建 MySQL 没有自动备份，`backup/` 这个 CronJob 是兜底手段，**建议保留**。
 
 ## 初始化数据库
 
@@ -261,8 +259,8 @@ kubectl -n chuangyue exec -i mysql-0 -- \
   把密文提交进 Git。键名即环境变量名（`CHUANGYUE_` 前缀），Pod 用 `envFrom` 全量注入，
   配置文件里对应键留空由环境变量覆盖（规则见 `pkg/config`）。
 - **三个不能随手生成的值**（其余都该用 `openssl rand`）：
-  - `CHUANGYUE_MYSQL_PASSWORD`：托管 MySQL 时填实例真实口令；自建时 `infra/mysql.yaml`
-    直接把它当 `MYSQL_ROOT_PASSWORD` 用，两边天然一致。
+  - `CHUANGYUE_MYSQL_PASSWORD`：`infra/mysql.yaml` 直接把它当 `MYSQL_ROOT_PASSWORD` 用，
+    Secret 与 MySQL 两边天然一致。
   - `CHUANGYUE_INTERACTION_MYSQL_PASSWORD`：**必须等于 `migrations/0015` 里 `CREATE USER` 的口令**
     （默认 `chy_interaction_pwd`）。要换口令，得先改迁移文件再初始化，或在库里 `ALTER USER`。
   - `CHUANGYUE_MAIL_PASSWORD`：服务商签发的 API Key，只能抄。
@@ -299,7 +297,7 @@ kubectl -n chuangyue exec -i mysql-0 -- \
   不要和 nginx-ingress 的配置混用。
 - **指标暴露**：各 Pod 的容器端口已带 `metrics`（`9201`~`9206`，由 `-metrics-addr` 指定），
   网关的 `/metrics` 与业务同端口（`8080`）。**K8s 侧监控属集群级能力，本仓库不编排 Prometheus / Grafana / Alertmanager**——
-  用 kube-prometheus-stack（或云托管 Prometheus，其自带 Alertmanager）按 Pod 注解 / ServiceMonitor 发现上述端口即可；
+  用 kube-prometheus-stack 按 Pod 注解 / ServiceMonitor 发现上述端口即可；
   `deploy/monitoring` 那套只为本地 compose 服务。**但告警规则本身可复用**：`deploy/monitoring/prometheus/alerts.yml`
   里的表达式与环境无关，改写成 `PrometheusRule` CRD 即可（只需把 `job` / `service` 标签的取值对齐集群里的命名）。
   切勿把 Prometheus / Alertmanager / Grafana 或 `/metrics` 暴露到公网——Alertmanager 的 UI 能静默告警，等于把「关掉报警」的能力交出去。
@@ -309,7 +307,7 @@ kubectl -n chuangyue exec -i mysql-0 -- \
 | 维度 | Compose（deploy/compose） | K8s（本目录） |
 |---|---|---|
 | 定位 | 本地一键起全栈 / 开发 | 集群部署 |
-| 基础设施 | 同一 compose 里起 mysql/redis/etcd/kafka/minio | 视为既有依赖，不在清单内 |
+| 基础设施 | 同一 compose 里起 mysql/redis/etcd/kafka/minio | 由 `infra/` 单独自建，不在 `base` 内 |
 | 接入层 | 无（前端走 Vite proxy，网关直接暴露 `8080`） | `web`（Nginx）托管前端 + 反代 `/api`，网关仅在集群内 |
 | 配置注入 | 挂载 `deploy/compose/config.yaml` | ConfigMap + Secret `envFrom` |
 | 服务地址 | `-advertise <compose 服务名>:端口` | `-advertise $(POD_IP):端口` |

@@ -275,7 +275,7 @@ export GRAFANA_ADMIN_PASSWORD='<自行设置>'
   生产应在接入层限制来源网段。
 - Jaeger 的 all-in-one 是**内存存储**：重启即丢，且单实例不抗压——生产应换成带持久化后端的部署
   （ClickHouse / Elasticsearch）并按需扩采集器，而不是把这里的 compose 定义照搬进集群。
-- 上 K8s 时监控栈属**集群级**能力：用 kube-prometheus-stack（含 Prometheus Operator 与 Alertmanager）
-  或云托管 Prometheus，按 Pod 注解 / ServiceMonitor 发现目标、用 `PrometheusRule` CRD 承载规则，
+- 上 K8s 时监控栈属**集群级**能力：用 kube-prometheus-stack（含 Prometheus Operator 与 Alertmanager），
+  按 Pod 注解 / ServiceMonitor 发现目标、用 `PrometheusRule` CRD 承载规则，
   而不是把这里的 compose 定义照搬进集群——但**规则本身可复用**：`alerts.yml` 里的表达式与目标环境无关，
   换过去只需把 `job` / `service` 标签的取值对齐集群里的命名。

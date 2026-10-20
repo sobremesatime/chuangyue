@@ -1,7 +1,7 @@
 # 窗月 · MySQL 8（单实例）
 #
 # 为什么是 StatefulSet：需要稳定的网络标识与 PVC 绑定（Pod 重建后仍挂同一块盘）。
-# 单实例不做主从：演示规模下 2C4G 的单机跑主从只会互相拖垮，真要高可用请用云 RDS。
+# 单实例不做主从：演示规模下 2C4G 的单机跑主从只会互相拖垮，真要高可用请改用带副本的 Operator。
 #
 # 口令：MYSQL_ROOT_PASSWORD 直接从 Secret 取 CHUANGYUE_MYSQL_PASSWORD，
 # 因此**应用配置里的 mysql.password 与 root 口令天然一致**，不需要两处维护。
