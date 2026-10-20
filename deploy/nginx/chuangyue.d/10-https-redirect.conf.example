@@ -1,0 +1,17 @@
+# 窗月 · HTTP → HTTPS 跳转（可选片段，**http 上下文**）
+#
+# 用法：去掉 .example 后缀，放到 Nginx 的 /etc/nginx/chuangyue.d/ 下（宿主机：
+#      /etc/nginx/chuangyue.d/10-https-redirect.conf；容器：把本目录挂到同一路径）。
+#      主配置里的 `include /etc/nginx/chuangyue.d/*.conf;` 会自动加载。
+#
+# 为什么只对「绑定的域名」跳转：主配置里已有一个 `server_name _` 的 80 端口默认 server，
+# 本块用精确 server_name 命中域名后跳转；Host 不是该域名（例如直接用 IP 访问、或健康检查
+# 打 IP）时仍落到默认 server 走纯 HTTP——演示环境不绑域名也能用，不会被跳转搞挂。
+
+server {
+    listen      80;
+    server_name chuangyue.example.com;   # ← 改成真实域名（多个域名用空格分隔）
+
+    # 301 是永久跳转，浏览器会长期缓存；证书还在调试阶段时可先用 302，避免反复清缓存
+    return 301 https://$host$request_uri;
+}

@@ -1,0 +1,71 @@
+# 窗月 · Prometheus 抓取配置（本地 / Compose）
+#
+# 目标即 `pkg/metrics` 埋点暴露的 /metrics（默认路径）：
+#   网关          gateway:8080          —— HTTP 指标挂在业务同一端口，刻意排在限流之外
+#   五个服务 + Worker  92xx              —— `-metrics-addr` 指定的独立端口，与 gRPC 端口分开
+#
+# 目标名用 **compose 服务名**：容器内解析依赖 compose 网络，因此 Prometheus 必须与
+# 应用服务在同一个 compose 项目里（见 deploy/compose/docker-compose.yml 的 monitoring profile）。
+# 服务若改为宿主机 `go run`，把 targets 换成 host.docker.internal:92xx 即可。
+#
+# 每个服务单独一个 job：`job` 标签直接等于服务名，`up{job="video"}`、按服务下钻都很直观。
+#
+# 判定与处置在这里分工：本文件抓数，`alerts.yml` 判定（规则命中即产生告警），
+# 判定出的告警推给 Alertmanager 去分组 / 抑制 / 通知（见 deploy/monitoring/alertmanager/）。
+
+global:
+  # 埋点本身是 15s 粒度的指标，抓取比它快没有收益；本地观察用 15s 足够。
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+# 告警规则文件。与 scrape_configs 分开放：抓取配置关心「数据从哪来」，
+# 规则关心「什么算异常」，两者的修改频率与评审人往往不同。
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# 判定出的告警推给谁。地址用 compose 服务名（容器内互访靠 compose 网络）。
+#
+# 不写 depends_on：Prometheus 对连不上的 Alertmanager 会持续重试，先起谁都能收敛；
+# 而反过来若把两者绑成启动依赖，Alertmanager 挂掉会连带 Prometheus 起不来——抓数不该被通知绑架。
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Prometheus 自身的运行指标（抓取耗时、TSDB 状态），排查「指标为什么没数据」时先看它。
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # 网关：HTTP 请求数 / 耗时 / 在途请求，按路由模板打标签
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
+
+  # 以下为各服务的 gRPC 服务端 / 客户端指标 + Go 运行时指标
+  - job_name: user
+    static_configs:
+      - targets: ["user:9203"]
+
+  - job_name: video
+    static_configs:
+      - targets: ["video:9202"]
+
+  - job_name: interaction
+    static_configs:
+      - targets: ["interaction:9201"]
+
+  - job_name: feed
+    static_configs:
+      - targets: ["feed:9204"]
+
+  - job_name: search
+    static_configs:
+      - targets: ["search:9205"]
+
+  # 转码 Worker 无 gRPC 端口，只有指标端口
+  - job_name: transcode-worker
+    static_configs:
+      - targets: ["transcode-worker:9206"]

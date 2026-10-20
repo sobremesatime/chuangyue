@@ -1,0 +1,94 @@
+# 窗月 · 接入层（Nginx：前端静态托管 + /api、/uploads 反代到网关）
+#
+# 这是全站**唯一对外入口**：前端静态资源由本容器托管，/api 与 /uploads 反代给网关。
+# 网关因此退居集群内部（ClusterIP，不再对外暴露），同域分发也免掉了 CORS。
+#
+# 镜像由 deploy/nginx/Dockerfile 构建（内含前端 dist 与 nginx.conf），
+# 因此这里不需要挂 ConfigMap —— 配置随镜像版本走，可回滚、不可变。
+#
+# 为什么要有 initContainer：nginx 只在**启动时**解析一次 upstream 域名（gateway:8080）。
+# 若 web 先于 gateway 的 Service 起，nginx 会因 DNS 解析失败而启动失败（反复 CrashLoop）。
+# 先用一个轻量容器等到 gateway 可解析，启动时序就确定了。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-gateway
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nslookup gateway >/dev/null 2>&1; do echo "等待网关 Service 就绪..."; sleep 2; done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      # 拉取私有 GHCR 镜像的凭据，由部署者预先创建的 Secret 提供（见 deploy/k8s/README）。
+      # 该 Secret 不存在也不会阻止 Pod 启动——只是私有仓库会 ImagePullBackOff；把 8 个包设为 public 时无需它。
+      imagePullSecrets:
+        - name: ghcr-auth
+      containers:
+        - name: web
+          image: chuangyue/web
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

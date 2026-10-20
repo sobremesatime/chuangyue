@@ -1,0 +1,32 @@
+# 窗月 · 接入层 TLS 监听与证书（可选片段，**server 上下文**）
+#
+# 用法：去掉 .example 后缀，放到 Nginx 的 /etc/nginx/chuangyue-tls.d/ 下，
+#      主配置里的 `include /etc/nginx/chuangyue-tls.d/*.conf;` 会自动启用；
+#      - 宿主机：/etc/nginx/chuangyue-tls.d/tls-listen.conf
+#      - 容器：把本目录挂到同一路径（如 -v ./chuangyue-tls.d:/etc/nginx/chuangyue-tls.d:ro）
+#      目录为空时（本地 compose / 未配证书的宿主机）本片段不存在，Nginx 照常以纯 HTTP 提供服务。
+#
+# 为什么只放「监听 + 证书」这几行：location / 反代 / 缓存策略等业务配置都写在主配置的 server 块里，
+# 这里 include 进来即与那部分共用同一份 server，不需要复制一遍（复制就会两处漂移）。
+
+listen 443 ssl;
+
+# HTTP/2 多路复用，降低静态资源与分片请求的连接开销（Nginx ≥ 1.25.1 用 `http2 on`）
+http2 on;
+
+# 证书：Let's Encrypt / acme.sh 的 fullchain.pem 与 privkey.pem
+# 路径按实际存放位置改；证书目录需对 Nginx 的 worker 用户可读
+ssl_certificate     /etc/nginx/certs/chuangyue.example.com/fullchain.pem;
+ssl_certificate_key /etc/nginx/certs/chuangyue.example.com/privkey.pem;
+
+# 只留 1.2 / 1.3：1.0 与 1.1 已被主流浏览器弃用且存在已知弱点
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_ciphers         HIGH:!aNULL:!MD5;
+ssl_session_cache   shared:SSL:10m;
+ssl_session_timeout 1h;
+
+# 首次走成 HTTPS 后，让浏览器此后强制只用 HTTPS（一年）
+# 注意：nginx 的 add_header **不继承**——凡是自带 add_header 的 location（/assets/、/index.html）
+# 都已在主配置里重复了同一份头，否则浏览器首次落地的入口页反而拿不到 HSTS。
+# 浏览器会忽略纯 HTTP 响应里的 HSTS 头，所以这些重复的写法对本地无 TLS 场景无害。
+add_header Strict-Transport-Security "max-age=31536000" always;

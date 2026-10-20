@@ -1,0 +1,1619 @@
+openapi: 3.0.3
+
+info:
+  title: 窗月 · 流媒体平台 API
+  description: |
+    前后端唯一契约。前端据此生成 TypeScript 类型，后端据此实现接口。
+    契约变更必须走代码评审。
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+    description: 通过网关访问
+
+tags:
+  - name: Auth
+    description: 认证与账号
+  - name: Video
+    description: 视频浏览与管理
+  - name: Interaction
+    description: 点赞、收藏与观看历史
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: 用户注册
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+
+  /auth/email/code:
+    post:
+      tags: [Auth]
+      summary: 发送邮箱验证码
+      description: |
+        按 purpose 区分用途：register 在邮箱已注册时报错；reset 无论邮箱是否注册都返回成功
+        （否则该接口可用于批量探测哪些邮箱注册过），只是未注册的邮箱收不到邮件。
+        投递驱动由服务端配置决定（dev 默认 log，生产用 smtp）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendCodeRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/SendCodeResponse'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: 用户登录，返回访问令牌并写入刷新令牌 Cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/TokenResponse'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: 用刷新令牌换取新的访问令牌
+      responses:
+        '200':
+          $ref: '#/components/responses/TokenResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: 退出登录，清除刷新令牌
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /auth/password/reset:
+    post:
+      tags: [Auth]
+      summary: 用邮箱验证码重置密码（忘记密码）
+      description: |
+        匿名接口：用户正是登不进来才走这条路，因此不需要令牌、也没有 old_password。
+        校验的是发给该邮箱的一次性验证码（purpose=reset，先调 /auth/email/code 获取）。
+        成功后该用户**此前签发的刷新令牌全部失效**（服务端令牌版本 +1），响应里不再返回令牌，
+        需要用户用新密码重新登录；网关同时清除本机已失效的刷新令牌 Cookie。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /users/me:
+    get:
+      tags: [Auth]
+      summary: 获取当前登录用户资料
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+    patch:
+      tags: [Auth]
+      summary: 更新当前登录用户资料（部分更新）
+      description: 只提交需要修改的字段；传空串表示清空该字段。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProfileRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+
+  /users/me/avatar:
+    post:
+      tags: [Auth]
+      summary: 上传 / 更换当前用户头像（multipart/form-data）
+      description: 头像落本地磁盘并通过网关 /uploads 直接访问；后续版本落 MinIO / CDN。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: '头像图片，支持 jpg / jpeg / png / webp，不超过 2MB' }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+
+  /users/me/password:
+    put:
+      tags: [Auth]
+      summary: 修改当前登录用户密码
+      description: 需要携带当前密码；新密码需为 6~64 个字符且不能与当前密码相同。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+
+  /videos:
+    get:
+      tags: [Video]
+      summary: 视频列表（分页）
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: category_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: keyword
+          in: query
+          description: 搜索关键词，按标题或简介模糊匹配；为空表示不搜索。
+          schema: { type: string }
+        - name: sort
+          in: query
+          description: |
+            排序方式。hot 表示按热度（播放、点赞、收藏加权并按发布时间衰减）；
+            为空或 new 表示按最新发布倒序。
+          schema:
+            type: string
+            enum: [new, hot]
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoListResponse'
+
+  /videos/{id}:
+    get:
+      tags: [Video]
+      summary: 视频详情
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoResponse'
+
+  /videos/{id}/interaction:
+    get:
+      tags: [Interaction]
+      summary: 查询当前用户对该视频的点赞 / 收藏状态
+      description: 需要登录；单独开接口是为了不给公开的视频详情引入可选鉴权。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/InteractionStateResponse'
+
+  /videos/{id}/like:
+    post:
+      tags: [Interaction]
+      summary: 点赞视频（幂等）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/LikeResponse'
+    delete:
+      tags: [Interaction]
+      summary: 取消点赞（幂等）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/LikeResponse'
+
+  /videos/{id}/favorite:
+    post:
+      tags: [Interaction]
+      summary: 收藏视频（幂等）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/FavoriteResponse'
+    delete:
+      tags: [Interaction]
+      summary: 取消收藏（幂等）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/FavoriteResponse'
+
+  /videos/{id}/history:
+    post:
+      tags: [Interaction]
+      summary: 上报观看历史（同一视频只保留一条并更新进度）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HistoryRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /videos/{id}/watch-later:
+    post:
+      tags: [Interaction]
+      summary: 加入稍后再看（幂等）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/WatchLaterResponse'
+    delete:
+      tags: [Interaction]
+      summary: 移出稍后再看（幂等）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/WatchLaterResponse'
+
+  /users/me/likes:
+    get:
+      tags: [Interaction]
+      summary: 我赞过的视频（分页，仅返回仍上架的视频）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoListResponse'
+
+  /users/me/favorites:
+    get:
+      tags: [Interaction]
+      summary: 我的收藏（分页，仅返回仍上架的视频）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoListResponse'
+
+  /users/me/watch-later:
+    get:
+      tags: [Interaction]
+      summary: 稍后再看（分页，按加入时间倒序，仅返回仍上架的视频）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoListResponse'
+
+  /users/me/history:
+    get:
+      tags: [Interaction]
+      summary: 观看历史（分页，按最近观看时间倒序，仅返回仍上架的视频）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoListResponse'
+
+  /users/me/notifications:
+    get:
+      tags: [Notification]
+      summary: 我的通知列表（分页，按时间倒序）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/NotificationListResponse'
+
+  /users/me/notifications/unread:
+    get:
+      tags: [Notification]
+      summary: 我的未读通知数（供顶栏红点轮询）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/NotificationUnreadResponse'
+
+  /users/me/notifications/read:
+    post:
+      tags: [Notification]
+      summary: 标记通知已读（传 id 标记单条，请求体为空表示全部已读）
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MarkNotificationsReadRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/NotificationUnreadResponse'
+
+  /videos/{id}/comments:
+    get:
+      tags: [Comment]
+      summary: 视频评论列表（分页，按发表时间倒序）
+      description: 公开接口，不需要登录。
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/CommentListResponse'
+    post:
+      tags: [Comment]
+      summary: 发表评论
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCommentRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/CommentResponse'
+
+  /comments/{id}:
+    delete:
+      tags: [Comment]
+      summary: 删除评论（仅作者本人或管理员）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /comments/{id}/replies:
+    get:
+      tags: [Comment]
+      summary: 某条一级评论下的回复列表（分页，按发表时间正序）
+      description: 公开接口，不需要登录；已登录时附带自己的点赞态。
+      parameters:
+        - $ref: '#/components/parameters/CommentId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/CommentListResponse'
+
+  /comments/{id}/like:
+    post:
+      tags: [Comment]
+      summary: 点赞评论
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CommentId'
+      responses:
+        '200':
+          $ref: '#/components/responses/CommentLikeResponse'
+    delete:
+      tags: [Comment]
+      summary: 取消点赞评论
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CommentId'
+      responses:
+        '200':
+          $ref: '#/components/responses/CommentLikeResponse'
+
+  /videos/{id}/danmaku:
+    get:
+      tags: [Danmaku]
+      summary: 视频弹幕列表（当前版本一次性返回该视频全部弹幕，按时间轴升序）
+      description: 公开接口，不需要登录。后续版本数据量上来后改为按时间窗分段拉取与实时推送。
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          $ref: '#/components/responses/DanmakuListResponse'
+    post:
+      tags: [Danmaku]
+      summary: 发表弹幕
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDanmakuRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/DanmakuResponse'
+
+  /danmaku/{id}:
+    delete:
+      tags: [Danmaku]
+      summary: 删除弹幕（仅发送者本人或管理员）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /reports:
+    post:
+      tags: [Report]
+      summary: 举报视频或评论
+      description: 需要登录；同一用户对同一对象只能举报一次，重复举报返回业务错误码。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReportRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ReportResponse'
+
+  /admin/users:
+    get:
+      tags: [Auth]
+      summary: 用户管理列表（分页）
+      description: |
+        供管理员检索账号、查看角色与封禁状态。
+        keyword 对用户名 / 邮箱 / 昵称作子串匹配；role / status 不传表示不过滤
+        （注意：0 也是一个合法取值——普通用户 / 已禁用，因此不能拿 0 当「不过滤」）。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: keyword
+          in: query
+          description: 用户名 / 邮箱 / 昵称的子串
+          schema: { type: string }
+        - name: role
+          in: query
+          description: 不传则返回全部角色
+          schema: { type: integer, enum: [0, 1] }
+        - name: status
+          in: query
+          description: 不传则返回全部状态
+          schema: { type: integer, enum: [0, 1] }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserListResponse'
+
+  /admin/users/{id}:
+    patch:
+      tags: [Auth]
+      summary: 修改账号状态 / 角色
+      description: |
+        请求体两个字段都可选，但至少给一个；不允许修改自己（避免管理员把自己降级或封禁后锁在门外）。
+        生效时机：禁用与角色变更在**下一次登录 / 刷新**时生效——访问令牌是无状态的，
+        已签发的那枚仍带旧角色，最长还能用 15 分钟。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUpdateUserRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+
+  /admin/videos:
+    get:
+      tags: [Video]
+      summary: 视频管理列表（分页，含未上架）
+      description: 与 GET /videos 的区别是不限定状态，供管理员查看内容池全貌。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: status
+          in: query
+          description: 不传则返回全部状态
+          schema: { type: integer, enum: [0, 1, 2, 3] }
+        - name: keyword
+          in: query
+          description: 标题 / 简介的子串匹配，不传表示不过滤
+          schema: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoListResponse'
+    post:
+      tags: [Video]
+      summary: 管理员上传视频（multipart/form-data）
+      description: 源文件落本地磁盘后状态置为「转码中」并投递异步转码任务；转码完成后自动上架，无需人工干预。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title]
+              properties:
+                file: { type: string, format: binary, description: 视频文件 }
+                title: { type: string, maxLength: 128 }
+                description: { type: string, maxLength: 512 }
+                category_id: { type: integer, format: int64 }
+                cover: { type: string, format: binary, description: 封面图，可选 }
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoResponse'
+
+  /admin/videos/{id}:
+    patch:
+      tags: [Video]
+      summary: 上架 / 下架视频
+      description: 只接受上架（1）与下架（2）两个目标状态，转码中（0）与转码失败（3）不可手动设置。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVideoStatusRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoResponse'
+    put:
+      tags: [Video]
+      summary: 编辑视频信息（multipart/form-data）
+      description: 字段均可选，传了才改（description 传空串表示清空简介）；封面传了才替换，片源不可替换。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 128 }
+                description: { type: string, maxLength: 512 }
+                category_id: { type: integer, format: int64 }
+                cover: { type: string, format: binary, description: 封面图，传了才替换 }
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoResponse'
+    delete:
+      tags: [Video]
+      summary: 删除视频（不可恢复）
+      description: |
+        同时清理数据库记录与磁盘上的视频、封面文件，并通过事件通知互动域清理该视频的
+        评论 / 弹幕 / 点赞 / 收藏 / 历史等关联数据（异步，秒级完成）。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /admin/videos/{id}/transcode:
+    post:
+      tags: [Video]
+      summary: 重新转码（仅转码失败的视频）
+      description: |
+        复用上传时已落盘的源文件，不需要重新上传字节：状态打回「转码中」并重新投递转码任务。
+        转码队列的背压闸门同样生效；非「转码失败」状态会被拒绝。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoResponse'
+
+  /admin/comments:
+    get:
+      tags: [Comment]
+      summary: 管理端评论列表（分页，含一级评论与回复，按发表时间倒序）
+      description: 内容治理用；仅返回未被删除的评论，keyword 可选，按评论内容模糊匹配。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: keyword
+          in: query
+          description: 按评论内容模糊匹配；为空表示不搜索。
+          schema: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminCommentListResponse'
+
+  /admin/comments/{id}:
+    delete:
+      tags: [Comment]
+      summary: 管理端删除评论（软删）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /admin/danmaku:
+    get:
+      tags: [Danmaku]
+      summary: 管理端弹幕列表（分页，按发表时间倒序）
+      description: 内容治理用；仅返回未被删除的弹幕，keyword 可选，按弹幕内容模糊匹配。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: keyword
+          in: query
+          description: 按弹幕内容模糊匹配；为空表示不搜索。
+          schema: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminDanmakuListResponse'
+
+  /admin/danmaku/{id}:
+    delete:
+      tags: [Danmaku]
+      summary: 管理端删除弹幕（软删）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /admin/reports:
+    get:
+      tags: [Report]
+      summary: 管理端举报列表（分页，按举报时间倒序）
+      description: 内容治理用；status 可选，0 待处理 / 1 已处理 / 2 已忽略，不传则返回全部。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: status
+          in: query
+          description: 不传则返回全部状态
+          schema: { type: integer, enum: [0, 1, 2] }
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminReportListResponse'
+
+  /admin/reports/{id}:
+    patch:
+      tags: [Report]
+      summary: 处理举报（标记已处理或忽略）
+      description: 只接受已处理（1）与已忽略（2）；已处理过的举报不可重复处理。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandleReportRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ReportResponse'
+
+  /admin/uploads:
+    post:
+      tags: [Video]
+      summary: 初始化分片上传（或命中秒传）
+      description: |
+        上传大文件前先调用本接口。命中「同指纹已完成」的会话时，直接复用已有对象登记视频并返回 video_id（秒传）；
+        命中「同指纹上传中」的会话时，返回该会话与已上传分片，供前端断点续传；否则新建会话并返回分片计划。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InitUploadRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/InitUploadResponse'
+
+  /admin/uploads/{id}:
+    get:
+      tags: [Video]
+      summary: 查询上传会话进度
+      description: 返回会话的分片计划与已上传分片，用于断点续传。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      responses:
+        '200':
+          $ref: '#/components/responses/InitUploadResponse'
+    delete:
+      tags: [Video]
+      summary: 中止上传
+      description: 释放该会话已上传的分片，并将会话标记为已中止。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      responses:
+        '200':
+          $ref: '#/components/responses/EmptyResponse'
+
+  /admin/uploads/{id}/parts/{n}/presign:
+    post:
+      tags: [Video]
+      summary: 获取分片直传地址
+      description: 前端凭该地址直传对象存储，绕开网关带宽；当前本地磁盘驱动不支持，返回业务错误码。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/PartNumber'
+      responses:
+        '200':
+          $ref: '#/components/responses/PresignPartResponse'
+
+  /admin/uploads/{id}/parts/{n}:
+    put:
+      tags: [Video]
+      summary: 上传单个分片
+      description: 请求体为该分片的原始二进制（application/octet-stream）。非末片必须等于单片大小，末片可小于等于；同一分片重复上传幂等。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/PartNumber'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          $ref: '#/components/responses/UploadedPartResponse'
+
+  /admin/uploads/{id}/complete:
+    post:
+      tags: [Video]
+      summary: 完成分片上传
+      description: 校验分片齐全后合并为源文件，登记视频（状态「转码中」）并投递异步转码任务；请求体可为空，省略 parts 时以服务端已记录的分片为准。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteUploadRequest' }
+      responses:
+        '200':
+          $ref: '#/components/responses/VideoResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    VideoId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+    CommentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, description: '评论的雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, default: 1, minimum: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+    UploadId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, description: '上传会话的雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+    PartNumber:
+      name: n
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1, description: '分片序号，从 1 开始' }
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, code, password]
+      properties:
+        email: { type: string, format: email, maxLength: 128, description: 登录邮箱 }
+        code: { type: string, pattern: '^\d{6}$', description: 邮箱验证码，6 位数字 }
+        password: { type: string, minLength: 6, maxLength: 64 }
+        nickname: { type: string, maxLength: 32, description: 不填则与邮箱前缀相同 }
+
+    LoginRequest:
+      type: object
+      required: [account, password]
+      properties:
+        account: { type: string, description: 用户名或邮箱 }
+        password: { type: string }
+
+    SendCodeRequest:
+      type: object
+      required: [email, purpose]
+      properties:
+        email: { type: string, format: email }
+        purpose:
+          type: string
+          enum: [register, reset]
+          description: |
+            验证码用途。register 用于注册（邮箱已注册会报错）；
+            reset 用于重置密码（无论是否注册都返回成功，防邮箱枚举）。
+            两种用途的验证码分开存储，不能混用。
+
+    SendCodeResponse:
+      type: object
+      properties:
+        expires_in: { type: integer, description: 验证码有效秒数 }
+        cooldown: { type: integer, description: 重发冷却秒数 }
+
+    ResetPasswordRequest:
+      type: object
+      required: [email, code, new_password]
+      properties:
+        email: { type: string, format: email, maxLength: 128, description: 账号邮箱 }
+        code: { type: string, pattern: '^\d{6}$', description: 重置验证码，6 位数字 }
+        new_password: { type: string, minLength: 6, maxLength: 64, description: 新密码，6~64 个字符 }
+
+    UpdateProfileRequest:
+      type: object
+      description: 个人资料部分更新，只提交需要修改的字段
+      properties:
+        username:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{2,23}$'
+          maxLength: 24
+          description: 用户名，3-24 位，以字母开头，仅含小写字母、数字与下划线；改名后旧用户名不再可用，需用新用户名或邮箱登录
+        nickname: { type: string, maxLength: 32, description: 昵称，不能为空 }
+        signature: { type: string, maxLength: 140, description: 个人签名，空串表示清空 }
+        gender: { type: integer, enum: [0, 1, 2, 3], description: '0 未设置，1 男，2 女，3 保密' }
+        birthday: { type: string, description: '生日 YYYY-MM-DD，空串表示清空' }
+        school: { type: string, maxLength: 64, description: 学校，空串表示清空 }
+        location: { type: string, maxLength: 64, description: 现居地，空串表示清空 }
+
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password: { type: string, minLength: 6, maxLength: 64, description: 当前密码 }
+        new_password: { type: string, minLength: 6, maxLength: 64, description: 新密码，6~64 个字符，不能与当前密码相同 }
+
+    AdminUpdateUserRequest:
+      type: object
+      description: 账号状态 / 角色的部分更新，两个字段都可选但至少给一个
+      properties:
+        status: { type: integer, enum: [0, 1], description: '0 已禁用，1 正常' }
+        role: { type: integer, enum: [0, 1], description: '0 普通用户，1 管理员' }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+        username: { type: string }
+        email: { type: string }
+        nickname: { type: string }
+        avatar: { type: string }
+        signature: { type: string, maxLength: 140, description: 个人签名 }
+        gender: { type: integer, description: '0 未设置，1 男，2 女，3 保密' }
+        birthday: { type: string, nullable: true, description: '生日 YYYY-MM-DD，未填写为空串' }
+        age: { type: integer, description: 由生日推算的周岁，未填写生日为 0 }
+        school: { type: string, maxLength: 64, description: 学校 }
+        location: { type: string, maxLength: 64, description: 现居地 }
+        role: { type: integer, description: '0 普通用户，1 管理员' }
+        status: { type: integer, description: '账号状态：1 正常，0 已禁用（本人资料里恒为 1）' }
+        created_at: { type: string, format: date-time }
+
+    TokenPair:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, example: Bearer }
+        expires_in: { type: integer, description: 访问令牌有效秒数 }
+
+    Video:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输以避免 JavaScript 精度丢失' }
+        title: { type: string }
+        description: { type: string }
+        cover_url: { type: string }
+        play_url: { type: string }
+        duration: { type: integer }
+        category_id: { type: integer, format: int64 }
+        view_count: { type: integer, format: int64 }
+        like_count: { type: integer, format: int64 }
+        favorite_count: { type: integer, format: int64, description: 视频被收藏的总数 }
+        status: { type: integer, description: '0 转码中，1 已上架，2 已下架，3 转码失败' }
+        error_msg: { type: string, description: 转码失败原因，仅 status 为 3 时有值，供管理端排查 }
+        created_at: { type: string, format: date-time }
+
+    UpdateVideoStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: integer, enum: [1, 2], description: '1 上架，2 下架' }
+
+    InteractionState:
+      type: object
+      properties:
+        liked: { type: boolean, description: 当前用户是否已点赞 }
+        favorited: { type: boolean, description: 当前用户是否已收藏 }
+        watch_later: { type: boolean, description: 当前用户是否已加入稍后再看 }
+        progress: { type: integer, description: 上次观看进度（秒），无记录为 0，用于续播 }
+
+    Comment:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输' }
+        video_id: { type: string, description: '雪花 ID，以字符串传输' }
+        user_id: { type: string, description: '雪花 ID，以字符串传输' }
+        username: { type: string, description: 作者用户名 }
+        nickname: { type: string, description: 作者昵称 }
+        avatar: { type: string, description: 作者头像地址 }
+        content: { type: string, description: 评论内容 }
+        like_count: { type: integer, format: int64, description: 评论点赞总数 }
+        liked: { type: boolean, description: 当前登录用户是否已点赞该评论，未登录恒为 false }
+        created_at: { type: string, format: date-time }
+        parent_id: { type: string, description: '所属一级评论的雪花 ID；"0" 表示本身是一级评论' }
+        reply_to_user_id: { type: string, description: '被回复者的雪花 ID，用于展示「回复 @某人」；"0" 表示未指定' }
+        reply_to_nickname: { type: string, description: 被回复者昵称，未指定或对方已注销时为空串 }
+        reply_count: { type: integer, format: int64, description: 一级评论的回复总数，回复项恒为 0 }
+        replies:
+          type: array
+          description: 一级评论内嵌的最近若干条回复预览，回复项恒为空数组
+          items: { $ref: '#/components/schemas/Comment' }
+
+    CommentLikeResult:
+      type: object
+      properties:
+        liked: { type: boolean, description: 点赞操作后的状态 }
+        like_count: { type: integer, format: int64, description: 最新的点赞总数 }
+
+    CreateCommentRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, description: 评论内容，非空且不超过 1000 字 }
+        parent_id:
+          type: string
+          description: '被回复的评论雪花 ID：指向一级评论即直接回复该评论，指向某条回复会扁平化到同一一级评论下；缺省或 "0" 表示发表一级评论'
+
+    Danmaku:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输' }
+        video_id: { type: string, description: '雪花 ID，以字符串传输' }
+        user_id: { type: string, description: '雪花 ID，以字符串传输' }
+        username: { type: string, description: 发送者用户名 }
+        nickname: { type: string, description: 发送者昵称 }
+        avatar: { type: string, description: 发送者头像地址 }
+        content: { type: string, description: 弹幕内容 }
+        time_ms: { type: integer, description: '视频时间轴位置（毫秒）' }
+        color: { type: string, description: '文字颜色（十六进制，如 #FFFFFF）' }
+        mode: { type: integer, enum: [1, 2, 3], description: '1 滚动，2 顶部，3 底部' }
+        created_at: { type: string, format: date-time }
+
+    CreateDanmakuRequest:
+      type: object
+      required: [content, time_ms]
+      properties:
+        content: { type: string, description: 弹幕内容，非空且不超过 100 字 }
+        time_ms: { type: integer, minimum: 0, description: 视频时间轴位置（毫秒） }
+        color: { type: string, description: '文字颜色，默认 #FFFFFF' }
+        mode: { type: integer, enum: [1, 2, 3], description: '展示模式，默认 1 滚动' }
+
+    LikeResult:
+      type: object
+      properties:
+        liked: { type: boolean, description: 点赞操作后的状态 }
+        like_count: { type: integer, format: int64, description: 最新的点赞总数 }
+
+    FavoriteResult:
+      type: object
+      properties:
+        favorited: { type: boolean, description: 收藏操作后的状态 }
+        favorite_count: { type: integer, format: int64, description: 最新的收藏总数 }
+
+    HistoryRequest:
+      type: object
+      properties:
+        progress: { type: integer, minimum: 0, description: 播放进度（秒），不传按 0 处理 }
+
+    WatchLaterResult:
+      type: object
+      properties:
+        watch_later: { type: boolean, description: 操作后是否在稍后再看列表中 }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输' }
+        type: { type: integer, description: '通知类型：1 评论被点赞，2 视频收到评论，3 评论收到回复，4 评论被管理员删除，5 弹幕被管理员删除' }
+        actor_id: { type: string, description: '触发者（操作人）的雪花 ID，以字符串传输' }
+        nickname: { type: string, description: 触发者昵称 }
+        avatar: { type: string, description: 触发者头像地址 }
+        video_id: { type: string, description: '关联视频的雪花 ID，以字符串传输，用于点击跳转' }
+        video_title: { type: string, description: 关联视频标题 }
+        content: { type: string, description: 触发时的评论内容快照（已截断） }
+        is_read: { type: boolean, description: 是否已读 }
+        created_at: { type: string, format: date-time }
+
+    NotificationUnread:
+      type: object
+      properties:
+        unread_count: { type: integer, format: int64, description: 未读通知数 }
+
+    MarkNotificationsReadRequest:
+      type: object
+      properties:
+        id: { type: string, description: '要标记已读的通知雪花 ID；缺省或为 0 表示全部标记已读' }
+
+    Report:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输' }
+        target_type: { type: integer, enum: [1, 2], description: '被举报对象类型：1 视频、2 评论' }
+        target_id: { type: string, description: '被举报对象的雪花 ID，以字符串传输' }
+        video_id: { type: string, description: '相关视频的雪花 ID，以字符串传输，用于管理端跳转定位' }
+        video_title: { type: string, description: 相关视频标题 }
+        reporter_id: { type: string, description: '举报人的雪花 ID，以字符串传输' }
+        reporter_nickname: { type: string, description: 举报人昵称 }
+        reason: { type: string, description: 举报理由（取自白名单） }
+        detail: { type: string, description: 补充说明，可为空 }
+        status: { type: integer, enum: [0, 1, 2], description: '0 待处理，1 已处理，2 已忽略' }
+        created_at: { type: string, format: date-time }
+        handled_at: { type: string, format: date-time, nullable: true, description: 处理时间，未处理时为空 }
+
+    CreateReportRequest:
+      type: object
+      required: [target_type, target_id, reason]
+      properties:
+        target_type: { type: integer, enum: [1, 2], description: '被举报对象类型：1 视频、2 评论' }
+        target_id: { type: string, description: '被举报对象的雪花 ID，以字符串传输' }
+        reason: { type: string, description: 举报理由，取值：垃圾广告 / 色情低俗 / 违法违规 / 侵权盗用 / 引战辱骂 / 其他 }
+        detail: { type: string, maxLength: 200, description: 补充说明，可选，不超过 200 字 }
+
+    HandleReportRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: integer, enum: [1, 2], description: '1 已处理，2 已忽略' }
+
+    AdminComment:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输' }
+        video_id: { type: string, description: '所属视频的雪花 ID，以字符串传输' }
+        video_title: { type: string, description: 所属视频标题 }
+        user_id: { type: string, description: '作者雪花 ID，以字符串传输' }
+        nickname: { type: string, description: 作者昵称 }
+        avatar: { type: string, description: 作者头像地址 }
+        content: { type: string, description: 评论内容 }
+        parent_id: { type: string, description: '所属一级评论的雪花 ID；"0" 表示本身是一级评论' }
+        reply_to_nickname: { type: string, description: 被回复者昵称，未指定时为空串 }
+        reply_count: { type: integer, format: int64, description: 一级评论的回复总数 }
+        like_count: { type: integer, format: int64, description: 评论点赞总数 }
+        created_at: { type: string, format: date-time }
+
+    AdminDanmaku:
+      type: object
+      properties:
+        id: { type: string, description: '雪花 ID，以字符串传输' }
+        video_id: { type: string, description: '所属视频的雪花 ID，以字符串传输' }
+        video_title: { type: string, description: 所属视频标题 }
+        user_id: { type: string, description: '发送者雪花 ID，以字符串传输' }
+        nickname: { type: string, description: 发送者昵称 }
+        content: { type: string, description: 弹幕内容 }
+        time_ms: { type: integer, description: '视频时间轴位置（毫秒）' }
+        mode: { type: integer, enum: [1, 2, 3], description: '1 滚动，2 顶部，3 底部' }
+        created_at: { type: string, format: date-time }
+
+    UploadedPart:
+      type: object
+      properties:
+        part_number: { type: integer, description: 分片序号，从 1 开始 }
+        etag: { type: string, description: 分片校验值 }
+        size: { type: integer, format: int64 }
+
+    InitUploadRequest:
+      type: object
+      required: [file_md5, filename, total_size, title]
+      properties:
+        file_md5: { type: string, pattern: '^[0-9a-fA-F]{32}$', description: 整文件 MD5（32 位十六进制），秒传与断点续传的依据 }
+        filename: { type: string, maxLength: 255 }
+        total_size: { type: integer, format: int64, minimum: 1 }
+        content_type: { type: string, maxLength: 128 }
+        title: { type: string, maxLength: 128 }
+        description: { type: string, maxLength: 512 }
+        category_id: { type: integer, format: int64 }
+
+    InitUploadResponse:
+      type: object
+      properties:
+        mode: { type: string, enum: [instant, multipart], description: instant 为秒传，multipart 为需分片上传 }
+        upload_id: { type: string, description: mode=multipart 时返回 }
+        chunk_size: { type: integer, format: int64, description: 单片字节数 }
+        part_total: { type: integer, description: 分片总数 }
+        uploaded:
+          type: array
+          description: 已上传分片，前端据此跳过，实现断点续传
+          items: { $ref: '#/components/schemas/UploadedPart' }
+        video_id: { type: string, description: mode=instant（秒传）时返回 }
+
+    PresignPartResponse:
+      type: object
+      properties:
+        part_number: { type: integer }
+        url: { type: string, description: 分片直传地址 }
+
+    CompleteUploadRequest:
+      type: object
+      properties:
+        parts:
+          type: array
+          description: 可选；省略时以服务端已记录的分片为准
+          items: { $ref: '#/components/schemas/UploadedPart' }
+
+    PageResult:
+      type: object
+      properties:
+        list: { type: array, items: {} }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    # 统一返回格式：{ code, message, data, trace_id }
+    Envelope:
+      type: object
+      properties:
+        code: { type: integer, description: '0 表示成功，非 0 为业务错误码' }
+        message: { type: string }
+        data: {}
+        trace_id: { type: string }
+
+  responses:
+    EmptyResponse:
+      description: 成功
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Envelope' }
+    InitUploadResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/InitUploadResponse' }
+    UploadedPartResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UploadedPart' }
+    PresignPartResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PresignPartResponse' }
+    UserResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+    UserListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/User' }
+    TokenResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TokenPair' }
+    SendCodeResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SendCodeResponse' }
+    VideoResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Video' }
+    VideoListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/Video' }
+    InteractionStateResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/InteractionState' }
+    CommentResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Comment' }
+    CommentLikeResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CommentLikeResult' }
+    CommentListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/Comment' }
+    DanmakuResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Danmaku' }
+    DanmakuListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Danmaku' }
+    LikeResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LikeResult' }
+    FavoriteResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FavoriteResult' }
+    WatchLaterResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/WatchLaterResult' }
+    NotificationUnreadResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/NotificationUnread' }
+    NotificationListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/Notification' }
+    ReportResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Report' }
+    AdminCommentListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminComment' }
+    AdminDanmakuListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminDanmaku' }
+    AdminReportListResponse:
+      description: 成功
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PageResult'
+                      - type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: '#/components/schemas/Report' }

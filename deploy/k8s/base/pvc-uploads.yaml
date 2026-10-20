@@ -1,0 +1,18 @@
+# 窗月 · 上传与转码产物的共享卷
+#
+# 为什么需要 RWX（ReadWriteMany）：视频服务写源文件与封面、转码 Worker 读源文件写 HLS 产物、
+# 网关静态托管 /uploads，三者是不同 Pod，必须挂同一份数据。因此本 PVC 必须由支持多读写的
+# StorageClass（NFS / CephFS / 云厂商 NAS 等）动态供给；若集群只有块存储（RWO），
+# 请把 upload.driver 改为 minio，让产物走对象存储，从而不再需要共享卷。
+#
+# storageClassName 留空表示使用集群默认存储类；如需指定请在此显式填写。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chuangyue-uploads
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi

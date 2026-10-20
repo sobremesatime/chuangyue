@@ -1,0 +1,109 @@
+# 窗月 · MySQL 8（单实例）
+#
+# 为什么是 StatefulSet：需要稳定的网络标识与 PVC 绑定（Pod 重建后仍挂同一块盘）。
+# 单实例不做主从：演示规模下 2C4G 的单机跑主从只会互相拖垮，真要高可用请用云 RDS。
+#
+# 口令：MYSQL_ROOT_PASSWORD 直接从 Secret 取 CHUANGYUE_MYSQL_PASSWORD，
+# 因此**应用配置里的 mysql.password 与 root 口令天然一致**，不需要两处维护。
+#
+# 建表：MySQL 镜像的 initdb 机制在本环境不适用（无法把仓库里的 migrations 目录挂进容器），
+# 所以库表由部署者执行一次 migrations —— 见 ../README.md「初始化数据库」。
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  # headless：StatefulSet 的稳定 DNS 来源（同时让 `mysql` 这个名字解析到 Pod IP，
+  # 应用配置里 mysql.host=mysql 才能生效）。
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mysql
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: database
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysql
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          # 字符集与 compose 保持一致：库表与连接都用 utf8mb4，避免中文/emoji 截断。
+          args:
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chuangyue-secrets
+                  key: CHUANGYUE_MYSQL_PASSWORD
+            # 首次初始化时自动建主库；互动库由 migrations/0015 负责建（含独立账号）。
+            - name: MYSQL_DATABASE
+              value: chuangyue
+            - name: TZ
+              value: Asia/Shanghai
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          # 就绪 = 能应答且有认证权限（首次启动要初始化数据目录，给足 20s 余量）。
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 10Gi

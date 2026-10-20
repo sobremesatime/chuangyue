@@ -1,0 +1,105 @@
+# 窗月 · Etcd v3.5（单实例）
+#
+# 用途：服务注册与发现。五个业务服务启动时把自身 Pod IP 写入 Etcd，
+# 调用方按服务名解析实例列表 —— 它是**运行必需**，不是可选项。
+#
+# 单实例不做集群：etcd 的高可用至少 3 个成员（多数派），在 2C4G 的单机上
+# 3 个进程只会互相抢资源。真要高可用请换成托管 etcd 或多节点部署。
+#
+# 认证：显式关闭（内网 ClusterIP + 不暴露到公网）。若将来要开 TLS / 认证，
+# 应用侧 pkg/registry 需要同步改造，不能只改这里。
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd
+  labels:
+    app.kubernetes.io/name: etcd
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  # headless：下面 peer URL 用的是 <pod>.<service> 形式，必须有每个 Pod 的 DNS 记录。
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: etcd
+  ports:
+    - name: client
+      port: 2379
+      targetPort: client
+    - name: peer
+      port: 2380
+      targetPort: peer
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: etcd
+  labels:
+    app.kubernetes.io/name: etcd
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: registry
+spec:
+  serviceName: etcd
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: etcd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: etcd
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: etcd
+          image: quay.io/coreos/etcd:v3.5.17
+          command: ["etcd"]
+          args:
+            - --name=etcd-0
+            - --data-dir=/etcd-data
+            # 监听 0.0.0.0：Pod 会换 IP，绑定具体地址会让重建后的 Pod 起不来。
+            - --listen-client-urls=http://0.0.0.0:2379
+            - --listen-peer-urls=http://0.0.0.0:2380
+            # 对外宣告 Service 名：应用配置里 etcd.endpoints=["etcd:2379"]，靠它解析。
+            - --advertise-client-urls=http://etcd:2379
+            - --initial-advertise-peer-urls=http://etcd-0.etcd.chuangyue.svc.cluster.local:2380
+            - --initial-cluster=etcd-0=http://etcd-0.etcd.chuangyue.svc.cluster.local:2380
+            - --initial-cluster-state=new
+            - --initial-cluster-token=chuangyue
+          ports:
+            - name: client
+              containerPort: 2379
+            - name: peer
+              containerPort: 2380
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          volumeMounts:
+            - name: data
+              mountPath: /etcd-data
+          readinessProbe:
+            exec:
+              command: ["etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 2Gi

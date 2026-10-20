@@ -1,0 +1,111 @@
+# 窗月 · Elasticsearch 8（单节点）
+#
+# 用途：搜索域的独立检索索引。索引数据全部由 Kafka 上的视频变更事件重建
+# （搜索服务启动时若发现索引为空，会从视频服务全量回填），因此它属于
+# **可丢弃的派生数据**——不做副本、不做快照也能接受。
+#
+# 为什么单节点：
+#   - 演示规模下检索 QPS 很低，副本带来的读吞吐没有意义；
+#   - 多节点意味着 shard 分配、脑裂配置、JVM 堆与磁盘三份预留，运维成本陡增。
+# 代价是节点故障期间搜索退回视频服务的库内 LIKE（可用性有退路，只是精度下降）。
+#
+# 安全：**关闭 xpack.security**。前提是它只在 ClusterIP 内可达；
+# 若要把 ES 暴露到集群外，请改用托管 ES 或自行开启 TLS + 认证。
+#
+# vm.max_map_count：ES 默认使用 mmap 读写索引，要求宿主机 vm.max_map_count >= 262144。
+# 这里用 node.store.allow_mmap=false 走普通文件 IO 来绕开该要求（牺牲部分性能），
+# 避免为了一个演示用检索索引去跑 privileged initContainer 改宿主机内核参数。
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  labels:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  labels:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: search-index
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elasticsearch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elasticsearch
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 60
+      # ES 的启动用户是 uid 1000；fsGroup 让 local-path 卷对它有写权限。
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9200
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: xpack.security.enabled
+              value: "false"
+            - name: xpack.security.enrollment.enabled
+              value: "false"
+            - name: node.store.allow_mmap
+              value: "false"
+            # 堆固定 512m：容器 limits 1Gi 时，堆 + 元空间 + 直接内存仍有余量；
+            # 不固定的话 JVM 会按节点物理内存推算，演示机上容易 OOMKilled。
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+            - name: TZ
+              value: Asia/Shanghai
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health?wait_for_status=yellow&timeout=5s
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 10Gi

@@ -1,0 +1,99 @@
+# 窗月 · 集群内定时备份（CronJob）
+#
+# 为什么放在独立的 backup/ 目录、而不是进 base/prod overlay：备份是**生产运维动作**，且它要挂
+# 上传卷（RWO，必须与业务 Pod 同节点）。做成可选目录后，用云托管数据库、或备份由云商负责的部署
+# 可以**整目录不 apply**——与 infra/ 同一套取舍（见 deploy/k8s/README.md）。
+#
+# 用法（在仓库根目录）：
+#   kubectl apply -k deploy/k8s/backup                    # 建 PVC + 脚本 ConfigMap + CronJob
+#   kubectl -n chuangyue get jobs -w                      # 看历史执行
+#   kubectl -n chuangyue create job --from=cronjob/chuangyue-backup backup-manual   # 立刻手工跑一次
+#
+# 前置：Secret chuangyue-secrets、上传卷 chuangyue-uploads、mysql Service 都得先在
+# chuangyue 命名空间里存在（即应用与中间件已部署）。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chuangyue-backup
+spec:
+  # 每天 03:30 备份：与 deploy/scripts/backup.sh 的 crontab 示例同点，避开访问高峰
+  schedule: "30 3 * * *"
+  # 时区显式钉在 Asia/Shanghai（需 k8s ≥ 1.27 才支持 spec.timeZone；更旧的集群删掉此行，
+  # 会按控制面所在时区解释 schedule）
+  timeZone: "Asia/Shanghai"
+  # 上一轮没结束就不开下一轮：备份是重 IO，且文件名带时间戳、无需靠并发；重叠只会拖垮节点
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # 只重试 1 次：真正的失败（连不上库、卷没挂上）重试也解决不了，宁可让 History 里留个红叉
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          # 备份 Pod 要挂上传卷（RWO）：必须与业务 Pod 落在**同一个打了标签的节点**，
+          # 否则 PVC 到不了这个节点、Pod 会一直 Pending。打标签命令见 deploy/k8s/README.md
+          # 「共享卷」一节（kubectl label node <node> chuangyue.io/storage=true）。
+          # 若你用的是真正的 RWX 存储（云 NAS / NFS），删掉这个 nodeSelector 即可。
+          nodeSelector:
+            chuangyue.io/storage: "true"
+          containers:
+            - name: backup
+              # mysql:8.0 自带 mysqldump 与 gzip / tar（脚本启动时也会自检这三样）；
+              # 是公共镜像，因此**不需要** imagePullSecrets（与业务镜像不同）
+              image: mysql:8.0
+              command: ["/bin/sh", "/scripts/backup.sh"]
+              env:
+                - name: MYSQL_HOST
+                  value: mysql
+                - name: MYSQL_PORT
+                  value: "3306"
+                - name: MYSQL_USER
+                  value: root
+                # root 口令即 Secret 里的 CHUANGYUE_MYSQL_PASSWORD：root 可导两个业务库，
+                # 因此不必再单独提供 chy_interaction 账号的口令
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: chuangyue-secrets
+                      key: CHUANGYUE_MYSQL_PASSWORD
+                - name: DB_LIST
+                  value: chuangyue chuangyue_interaction
+                - name: BACKUP_DIR
+                  value: /var/backups/chuangyue
+                - name: RETAIN_DAYS
+                  value: "7"
+                - name: UPLOADS_DIR
+                  value: /uploads
+                - name: TZ
+                  value: Asia/Shanghai
+              volumeMounts:
+                - name: backups
+                  mountPath: /var/backups/chuangyue
+                # 上传卷只读挂入：备份只读不写，readOnly 更贴合意图
+                - name: uploads
+                  mountPath: /uploads
+                  readOnly: true
+                - name: script
+                  mountPath: /scripts
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: chuangyue-backups
+            - name: uploads
+              persistentVolumeClaim:
+                claimName: chuangyue-uploads
+                readOnly: true
+            # 脚本来自 configMapGenerator（disableNameSuffixHash，名字才是固定的）
+            - name: script
+              configMap:
+                name: chuangyue-backup-script
+                defaultMode: 0555

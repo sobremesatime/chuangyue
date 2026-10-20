@@ -1,0 +1,93 @@
+# 窗月 · 网关（对外唯一入口，纯 HTTP ↔ gRPC 翻译层）
+#
+# 网关不持有业务库，只做：HTTP 路由 → gRPC 调用 → 响应映射；鉴权与 TraceID 注入也在这一层。
+# 因此它没有 MySQL 依赖，只需要 Etcd（发现各服务）与 Redis（限流等后续能力）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      # 应用收到 SIGTERM 后会 GracefulStop（最多 10s），给足时间让在途请求收尾。
+      terminationGracePeriodSeconds: 30
+      # 拉取私有 GHCR 镜像的凭据，由部署者预先创建的 Secret 提供（见 deploy/k8s/README）。
+      # 该 Secret 不存在也不会阻止 Pod 启动——只是私有仓库会 ImagePullBackOff；把 8 个包设为 public 时无需它。
+      imagePullSecrets:
+        - name: ghcr-auth
+      containers:
+        - name: gateway
+          image: chuangyue/gateway
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/app/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          envFrom:
+            - secretRef:
+                name: chuangyue-secrets
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            # 静态托管上传产物，必须与 video / transcode-worker 共享同一份数据
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: config
+          configMap:
+            name: chuangyue-config
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: chuangyue-uploads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

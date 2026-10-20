@@ -1,0 +1,466 @@
+syntax = "proto3";
+
+package video.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/sobremesatime/chuangyue/api/gen/video/v1;videov1";
+
+// VideoBrief 是跨服务所需的「卡片字段」视频信息。
+//
+// 供首页推荐、搜索、通知等只需要卡片信息的场景使用：校验视频是否存在、
+// 取标题与封面展示、按分类做兴趣匹配，并能直接渲染出首页卡片（时长 / 播放量 / 发布时间）。
+// 需要完整展示字段（简介 / 播放地址 / 点赞收藏数 / 转码失败原因）的场景请用 VideoInfo。
+message VideoBrief {
+  int64  id          = 1;
+  string title       = 2;
+  int64  uploader_id = 3;
+  int32  status      = 4;
+  string cover_url   = 5;
+  // category_id 供首页推荐做兴趣匹配（命中用户兴趣分类的视频加权靠前）。
+  int64  category_id = 6;
+
+  // 以下三项供首页卡片直接渲染：时长角标、播放量、发布时间。
+  // 补齐后首页流无需再按 id 回查 VideoInfo，即可产出与视频列表一致的卡片。
+  int32  duration                      = 7;
+  int64  view_count                    = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+// VideoInfo 是视频的完整对外信息，供网关的视频读路径与管理端回填响应使用。
+//
+// 之所以与 VideoBrief 分开、而不是把详情字段塞进 VideoBrief：feed / search 的
+// 响应复用 VideoBrief，若合并它们就会带上这些场景从不填充的空字段（如 play_url、
+// error_msg），污染对外契约。内部字段（source_url）两者都不暴露，由
+// GetTranscodeState 单独承载。
+message VideoInfo {
+  int64  id          = 1;
+  string title       = 2;
+  int64  uploader_id = 3;
+  int32  status      = 4;
+  string cover_url   = 5;
+  int64  category_id = 6;
+
+  string description    = 7;
+  string play_url       = 8;
+  int32  duration       = 9;
+  int64  view_count     = 10;
+  int64  like_count     = 11;
+  int64  favorite_count = 12;
+  // error_msg 为转码失败原因，仅管理端展示；普通用户可见的已上架视频恒为空串。
+  string error_msg = 13;
+  google.protobuf.Timestamp created_at = 14;
+}
+
+// UploadedPart 是一个已上传分片的对外描述。
+message UploadedPart {
+  int32  part_number = 1;
+  string etag        = 2;
+  int64  size        = 3;
+}
+
+// ReportInfo 是对外暴露的举报信息。
+message ReportInfo {
+  int64  id                = 1;
+  int32  target_type       = 2;
+  int64  target_id         = 3;
+  int64  video_id          = 4;
+  string video_title       = 5;
+  int64  reporter_id       = 6;
+  string reporter_nickname = 7;
+  string reason            = 8;
+  string detail            = 9;
+  int32  status            = 10;
+  google.protobuf.Timestamp created_at = 11;
+  // handled_at 为空表示尚未处理，用可空的时间戳消息表达。
+  google.protobuf.Timestamp handled_at = 12;
+}
+
+message GetVideoRequest {
+  int64 id = 1;
+}
+
+message GetVideoResponse {
+  VideoInfo video = 1;
+}
+
+message GetVideosRequest {
+  repeated int64 ids = 1;
+}
+
+message GetVideosResponse {
+  repeated VideoBrief videos = 1;
+}
+
+// GetVideoInfos 批量取视频的「完整信息」，返回 VideoInfo 而不是 VideoBrief。
+//
+// 与 GetVideos 的分工：GetVideos 供 feed / search 等只渲染卡片的场景（精简、无 play_url）；
+// GetVideoInfos 供互动域的「我」列表与管理端治理列表——它们需要 description / play_url /
+// error_msg 等完整字段，且不能退回「按 id 逐个 GetVideo」造成 N+1。
+message GetVideoInfosRequest {
+  repeated int64 ids = 1;
+}
+
+message GetVideoInfosResponse {
+  repeated VideoInfo videos = 1;
+}
+
+message ListFeedCandidatesRequest {
+  int32 limit = 1;
+}
+
+message ListFeedCandidatesResponse {
+  repeated VideoBrief videos = 1;
+}
+
+// ListVideosRequest 是视频浏览列表的查询条件。
+message ListVideosRequest {
+  int64  category_id = 1;
+  string keyword     = 2;
+  int32  sort        = 3; // 0=最新（默认）, 1=热度
+  int32  page        = 4;
+  int32  page_size   = 5;
+}
+
+message ListVideosResponse {
+  repeated VideoInfo videos = 1;
+  int64 total = 2;
+}
+
+message IncrViewCountRequest {
+  int64 video_id = 1;
+}
+
+message IncrViewCountResponse {}
+
+// GetTranscodeState 返回转码 Worker 判定幂等所需的最小状态，仅内部服务间使用。
+//
+// 之所以单独定义它、而不是把 source_url 加进上面的 VideoInfo / VideoBrief：这两个
+// 都是给前端使用的对外结构，源文件地址属于内部字段，不应暴露；转码 Worker 需要的正是
+// 这个内部字段与状态，所以用一个内部专用 RPC 承载。
+message GetTranscodeStateRequest {
+  int64 video_id = 1;
+}
+
+message GetTranscodeStateResponse {
+  int64  video_id   = 1;
+  int32  status     = 2;
+  string source_url = 3;
+}
+
+// ReportTranscodeResult 由转码 Worker 回写结果，返回空响应表示受理。
+message ReportTranscodeResultRequest {
+  int64  video_id  = 1;
+  string play_url  = 2;
+  int32  duration  = 3;
+  int32  status    = 4;
+  string error_msg = 5;
+}
+
+message ReportTranscodeResultResponse {}
+
+// ============================================================
+// 管理端视频 CRUD（无字节体的部分，随 VideoService 暴露）
+// ============================================================
+
+// AdminListVideosRequest 是视频管理列表的查询条件。
+//
+// status 用 optional 表达「未传」：0 是合法状态值（转码中），
+// 用数字 0 兜底会与「不筛选」混淆。
+message AdminListVideosRequest {
+  int32          page      = 1;
+  int32          page_size = 2;
+  optional int32 status    = 3;
+  // keyword 对标题与简介做子串匹配，供视频管理页在内容多时定位。
+  string         keyword   = 4;
+}
+
+message AdminListVideosResponse {
+  repeated VideoInfo videos = 1;
+  int64 total      = 2;
+  int32 page       = 3;
+  int32 page_size  = 4;
+}
+
+// RetryTranscodeRequest 重新转码一个失败视频。
+//
+// 只对「转码失败」的视频生效：源文件在上传时已落盘（失败不删源），
+// 所以重试不需要管理员再传一遍几百 MB。成功后状态回到「转码中」并重新投递任务，
+// 转码队列的背压闸门同样生效（否则重试就成了绕过上限的旁路）。
+message RetryTranscodeRequest {
+  int64 id = 1;
+}
+
+message RetryTranscodeResponse {
+  VideoInfo video = 1;
+}
+
+// UpdateVideoStatusRequest 是上下架视频的输入。
+//
+// status 用 optional 区分「字段缺失」与「传了 0」：缺失时返回参数错误。
+message UpdateVideoStatusRequest {
+  int64          id     = 1;
+  optional int32 status = 2;
+}
+
+message UpdateVideoStatusResponse {
+  VideoInfo video = 1;
+}
+
+message DeleteVideoRequest {
+  int64 id = 1;
+}
+
+// DeleteVideoResponse 回传被删除视频的 ID（字符串形式，规避 JS 精度问题）。
+message DeleteVideoResponse {
+  string id = 1;
+}
+
+// UpdateVideo 是客户端流式：首帧为元信息，其后为封面字节（可选）。
+//
+// 之所以用流式而不是单个 bytes 字段：封面可能在数 MB 级，
+// 单条 gRPC 消息默认上限 4MB，无法承载。
+message UpdateVideoFrame {
+  oneof payload {
+    UpdateVideoMeta meta  = 1;
+    bytes           chunk = 2;
+  }
+}
+
+// UpdateVideoMeta 描述一次编辑操作的元信息。
+//
+// title / description / category_id 用 optional 区分「未传」与「传了空值」：
+// 简介允许被清空成空串，而未传表示不修改。
+message UpdateVideoMeta {
+  int64           id          = 1;
+  optional string title       = 2;
+  optional string description = 3;
+  optional int64  category_id = 4;
+  // has_cover 为真时，后续 chunk 帧全部是本次要替换的封面字节。
+  bool   has_cover      = 5;
+  string cover_filename = 6;
+  int64  cover_size     = 7;
+}
+
+message UpdateVideoResponse {
+  VideoInfo video = 1;
+}
+
+// ============================================================
+// UploadService：单文件上传 + 分片上传全生命周期
+// ============================================================
+
+// UploadVideo 是客户端流式：首帧为元信息，其后先视频文件字节，再封面字节（可选）。
+message UploadVideoFrame {
+  oneof payload {
+    UploadVideoMeta meta  = 1;
+    bytes           chunk = 2;
+  }
+}
+
+message UploadVideoMeta {
+  reserved 1; // 原 uploader_id：上传者身份改由 gRPC metadata 透传
+  string title        = 2;
+  string description  = 3;
+  int64  category_id  = 4;
+  string filename     = 5;
+  int64  size         = 6;
+  bool   has_cover    = 7;
+  string cover_filename = 8;
+  int64  cover_size     = 9;
+}
+
+message UploadVideoResponse {
+  VideoInfo video = 1;
+}
+
+// InitUploadRequest 是初始化分片上传的输入。
+//
+// 文件指纹（file_md5）是秒传与断点续传的唯一依据，由前端在上传前算好。
+message InitUploadRequest {
+  reserved 1; // 原 admin_id：发起者身份改由 gRPC metadata 透传
+  string file_md5     = 2;
+  string filename     = 3;
+  int64  total_size   = 4;
+  string content_type = 5;
+  string title        = 6;
+  string description  = 7;
+  int64  category_id  = 8;
+}
+
+// InitUploadResponse 是初始化 / 查询会话的结果。
+//
+// mode 为 instant 时只填 video_id；为 multipart 时填会话与分片计划，
+// uploaded 列出已上传分片，前端据此跳过，实现断点续传。
+message InitUploadResponse {
+  string mode       = 1;
+  string upload_id  = 2;
+  int64  chunk_size = 3;
+  int32  part_total = 4;
+  repeated UploadedPart uploaded = 5;
+  string video_id   = 6;
+}
+
+message UploadStatusRequest {
+  reserved 1; // 原 admin_id：发起者身份改由 metadata 透传
+  int64 upload_id = 2;
+}
+
+message UploadStatusResponse {
+  string mode       = 1;
+  string upload_id  = 2;
+  int64  chunk_size = 3;
+  int32  part_total = 4;
+  repeated UploadedPart uploaded = 5;
+  string video_id   = 6;
+}
+
+message PresignPartRequest {
+  reserved 1; // 原 admin_id：发起者身份改由 metadata 透传
+  int64 upload_id = 2;
+  int32 number    = 3;
+}
+
+message PresignPartResponse {
+  int32  part_number = 1;
+  string url         = 2;
+}
+
+// PutPart 是客户端流式：首帧为元信息，其后为该分片的字节。
+message PutPartFrame {
+  oneof payload {
+    PutPartMeta meta  = 1;
+    bytes       chunk = 2;
+  }
+}
+
+// PutPartMeta 描述一个待上传分片；size 为 -1 表示长度未知。
+message PutPartMeta {
+  reserved 1; // 原 admin_id：发起者身份改由 metadata 透传
+  int64 upload_id = 2;
+  int32 number    = 3;
+  int64 size      = 4;
+}
+
+message PutPartResponse {
+  UploadedPart part = 1;
+}
+
+message CompleteUploadRequest {
+  reserved 1; // 原 admin_id：发起者身份改由 metadata 透传
+  int64 upload_id = 2;
+  repeated UploadedPart parts = 3;
+}
+
+message CompleteUploadResponse {
+  VideoInfo video = 1;
+}
+
+message AbortUploadRequest {
+  reserved 1; // 原 admin_id：发起者身份改由 metadata 透传
+  int64 upload_id = 2;
+}
+
+message AbortUploadResponse {
+  string id = 1;
+}
+
+// ============================================================
+// ReportService：内容举报
+// ============================================================
+
+message CreateReportRequest {
+  reserved 1; // 原 user_id：举报者身份改由 metadata 透传
+  int32  target_type = 2;
+  int64  target_id   = 3;
+  string reason      = 4;
+  string detail      = 5;
+}
+
+message CreateReportResponse {
+  ReportInfo report = 1;
+}
+
+message ListReportsRequest {
+  int32          page      = 1;
+  int32          page_size = 2;
+  optional int32 status    = 3;
+}
+
+message ListReportsResponse {
+  repeated ReportInfo reports = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message HandleReportRequest {
+  reserved 2; // 原 handler_id：处理人身份改由 metadata 透传
+  int64 id     = 1;
+  int32 status = 3;
+}
+
+message HandleReportResponse {
+  ReportInfo report = 1;
+}
+
+// VideoService 供其它服务读取视频信息，并承载管理端不含字节体的 CRUD。
+service VideoService {
+  // GetVideo 返回单个视频的完整信息，供网关详情页使用。
+  rpc GetVideo(GetVideoRequest) returns (GetVideoResponse);
+  // GetVideos 批量取视频卡片信息，供推荐、搜索与通知等场景使用。
+  rpc GetVideos(GetVideosRequest) returns (GetVideosResponse);
+  // GetVideoInfos 批量取视频完整信息，供互动域「我」列表与管理端治理列表使用。
+  rpc GetVideoInfos(GetVideoInfosRequest) returns (GetVideoInfosResponse);
+  // ListFeedCandidates 返回首页候选池：已上架视频按热度倒序取前 limit 条。
+  rpc ListFeedCandidates(ListFeedCandidatesRequest) returns (ListFeedCandidatesResponse);
+  // ListVideos 是视频浏览列表（支持分类过滤、关键词、排序、分页），供网关的 GET /videos 使用。
+  rpc ListVideos(ListVideosRequest) returns (ListVideosResponse);
+  // IncrViewCount 播放量自增，供详情页统计；与 GetVideo 分开是因为读接口不应带副作用。
+  rpc IncrViewCount(IncrViewCountRequest) returns (IncrViewCountResponse);
+
+  // GetTranscodeState / ReportTranscodeResult 供转码 Worker 读写视频状态，
+  // 这两个 RPC 供内部进程调用，不对外暴露 source_url，也不扩展 VideoBrief。
+  rpc GetTranscodeState(GetTranscodeStateRequest) returns (GetTranscodeStateResponse);
+  rpc ReportTranscodeResult(ReportTranscodeResultRequest) returns (ReportTranscodeResultResponse);
+
+  // ---- 管理端 CRUD（片源不可替换，编辑仅改元信息与封面）----
+  // AdminListVideos 分页查询全部视频（含未上架），供视频管理列表使用。
+  rpc AdminListVideos(AdminListVideosRequest) returns (AdminListVideosResponse);
+  // UpdateVideoStatus 上下架视频（仅允许上架 / 下架）。
+  rpc UpdateVideoStatus(UpdateVideoStatusRequest) returns (UpdateVideoStatusResponse);
+  // RetryTranscode 重新转码一个失败视频（复用已上传的源文件）。
+  rpc RetryTranscode(RetryTranscodeRequest) returns (RetryTranscodeResponse);
+  // UpdateVideo 编辑视频元信息（标题 / 简介 / 分类 / 封面），封面走客户端流式。
+  rpc UpdateVideo(stream UpdateVideoFrame) returns (UpdateVideoResponse);
+  // DeleteVideo 删除视频及其源文件与封面。
+  rpc DeleteVideo(DeleteVideoRequest) returns (DeleteVideoResponse);
+}
+
+// UploadService 承载单文件上传与分片上传的完整生命周期。
+service UploadService {
+  // UploadVideo 管理员上传整段视频（客户端流式，文件与可选封面）。
+  rpc UploadVideo(stream UploadVideoFrame) returns (UploadVideoResponse);
+  // InitUpload 初始化分片上传：命中秒传直接登记，命中上传中的会话回传进度。
+  rpc InitUpload(InitUploadRequest) returns (InitUploadResponse);
+  // UploadStatus 查询上传进度与已上传分片。
+  rpc UploadStatus(UploadStatusRequest) returns (UploadStatusResponse);
+  // PresignPart 获取某一片的预签名直传地址；驱动不支持时返回错误。
+  rpc PresignPart(PresignPartRequest) returns (PresignPartResponse);
+  // PutPart 服务端代传单个分片（客户端流式），供 local 驱动回退使用。
+  rpc PutPart(stream PutPartFrame) returns (PutPartResponse);
+  // CompleteUpload 合并全部分片并登记视频。
+  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+  // AbortUpload 中止上传并释放分片。
+  rpc AbortUpload(AbortUploadRequest) returns (AbortUploadResponse);
+}
+
+// ReportService 承载内容举报的发起与管理端处理。
+service ReportService {
+  // CreateReport 发起举报（视频或评论）。
+  rpc CreateReport(CreateReportRequest) returns (CreateReportResponse);
+  // ListReports 管理端分页查询举报列表。
+  rpc ListReports(ListReportsRequest) returns (ListReportsResponse);
+  // HandleReport 管理端处理举报（已处理 / 已忽略）。
+  rpc HandleReport(HandleReportRequest) returns (HandleReportResponse);
+}

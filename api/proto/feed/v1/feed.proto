@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package feed.v1;
+
+option go_package = "github.com/sobremesatime/chuangyue/api/gen/feed/v1;feedv1";
+
+import "video/v1/video.proto";
+
+message GetHomeFeedRequest {
+  reserved 1; // 原 user_id：已登录身份改由 gRPC metadata 透传；无身份即未登录，按热度回退
+  int32 page      = 2;
+  int32 page_size = 3;
+}
+
+message GetHomeFeedResponse {
+  repeated video.v1.VideoBrief videos = 1;
+  int64 total = 2;
+}
+
+// FeedService 提供首页推荐流。
+service FeedService {
+  // GetHomeFeed 返回首页推荐流（按用户个性化，未登录时按热度回退）。
+  rpc GetHomeFeed(GetHomeFeedRequest) returns (GetHomeFeedResponse);
+}

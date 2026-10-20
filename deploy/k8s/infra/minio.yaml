@@ -1,0 +1,108 @@
+# 窗月 · MinIO（可选对象存储）
+#
+# 只在 upload.driver=minio 时需要；默认 local 驱动下它只是空转，可整段跳过。
+# 保留它的原因：一旦集群只有块存储（无 RWX），切 minio 是推荐出路
+# （见 ../README.md「共享卷要求 RWX」）。
+#
+# 单盘单实例：不做纠删码（erasure coding 至少 4 盘），演示规模够用。
+# 凭据：MINIO_ROOT_USER/PASSWORD 取自 Secret 的
+# CHUANGYUE_UPLOAD_MINIO_ACCESS_KEY / CHUANGYUE_UPLOAD_MINIO_SECRET_KEY，
+# 与应用配置 upload.minio.access_key/secret_key 天然一致。
+#
+# 注意：bucket 不会自动创建。启用 minio 驱动时需手工建一次（见 ../README.md）。
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    - name: console
+      port: 9001
+      targetPort: console
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: object-storage
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: minio
+          # 建议锁定版本（RELEASE.xxxx）以便回滚；这里跟随 compose 用 latest。
+          image: minio/minio:latest
+          command: ["minio", "server", "/data", "--console-address", ":9001"]
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: chuangyue-secrets
+                  key: CHUANGYUE_UPLOAD_MINIO_ACCESS_KEY
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chuangyue-secrets
+                  key: CHUANGYUE_UPLOAD_MINIO_SECRET_KEY
+            - name: TZ
+              value: Asia/Shanghai
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # MinIO 自带健康端点，比端口探测更能反映「存储是否可服务」。
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi

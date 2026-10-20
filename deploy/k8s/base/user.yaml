@@ -1,0 +1,103 @@
+# 窗月 · 用户服务（账号、资料、认证）
+#
+# 依赖：MySQL（chuangyue 库）、Redis（验证码 / 令牌）、Etcd（注册发现）。
+# 存储：与 gateway / video / transcode-worker 共享 chuangyue-uploads 卷——本服务写头像，
+# 网关从同一份卷静态托管 /uploads，不共享就会「上传成功但图片 404」。
+#
+# -advertise 用 $(POD_IP)（Downward API 注入的 Pod IP）而非 Service DNS：
+# 让每个实例以「自身 IP」注册到 Etcd，调用方做真正的实例级负载均衡；
+# 若填 Service 名，所有实例会注册成同一个地址，等于把负载均衡推回 kube-proxy。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user
+  labels:
+    app.kubernetes.io/name: user
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: user
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: user
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: user
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      # 拉取私有 GHCR 镜像的凭据，由部署者预先创建的 Secret 提供（见 deploy/k8s/README）。
+      # 该 Secret 不存在也不会阻止 Pod 启动——只是私有仓库会 ImagePullBackOff；把 8 个包设为 public 时无需它。
+      imagePullSecrets:
+        - name: ghcr-auth
+      containers:
+        - name: user
+          image: chuangyue/user
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/app/config.yaml", "-addr", ":9103", "-advertise", "$(POD_IP):9103", "-metrics-addr", ":9203"]
+          ports:
+            - name: grpc
+              containerPort: 9103
+            # Prometheus 抓取端口（配合 PodMonitor / 注解抓取）
+            - name: metrics
+              containerPort: 9203
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          envFrom:
+            - secretRef:
+                name: chuangyue-secrets
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            # 头像落 ./uploads，而 /uploads 由网关从这份共享卷托管：两者是不同进程，
+            # 不挂同一份卷头像就 404（本地 go run 时两个进程共用一个工作目录，会掩盖此问题）。
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: config
+          configMap:
+            name: chuangyue-config
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: chuangyue-uploads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user
+  labels:
+    app.kubernetes.io/name: user
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: user
+  ports:
+    - name: grpc
+      port: 9103
+      targetPort: grpc

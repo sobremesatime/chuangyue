@@ -1,0 +1,19 @@
+# 窗月 · Grafana 数据源（provisioning：随容器启动自动加载，无需手工点选）
+#
+# uid 固定为 prometheus：看板 JSON 里按 uid 引用数据源，避免依赖「数据源名字」这种可被改动的配置。
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # 走 compose 网络内的服务名，与 scraping 目标同一套寻址方式
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # 与 prometheus.yml 的 scrape_interval 对齐，Prometheus 据此推断数据点间隔
+      timeInterval: 15s
+      httpMethod: POST

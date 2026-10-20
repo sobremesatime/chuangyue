@@ -1,0 +1,91 @@
+# 窗月 · 推荐服务（首页推荐流：未登录按热度、登录按个性化）
+#
+# 不持有业务表：候选池经 gRPC 取 video，登录用户的行为信号经 gRPC 取 interaction，
+# 结果缓存在 Redis；服务名注册到 Etcd 供网关发现。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feed
+  labels:
+    app.kubernetes.io/name: feed
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: feed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: feed
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: feed
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      # 拉取私有 GHCR 镜像的凭据，由部署者预先创建的 Secret 提供（见 deploy/k8s/README）。
+      # 该 Secret 不存在也不会阻止 Pod 启动——只是私有仓库会 ImagePullBackOff；把 8 个包设为 public 时无需它。
+      imagePullSecrets:
+        - name: ghcr-auth
+      containers:
+        - name: feed
+          image: chuangyue/feed
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/app/config.yaml", "-addr", ":9104", "-advertise", "$(POD_IP):9104", "-metrics-addr", ":9204"]
+          ports:
+            - name: grpc
+              containerPort: 9104
+            # Prometheus 抓取端口（配合 PodMonitor / 注解抓取）
+            - name: metrics
+              containerPort: 9204
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          envFrom:
+            - secretRef:
+                name: chuangyue-secrets
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: chuangyue-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feed
+  labels:
+    app.kubernetes.io/name: feed
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: feed
+  ports:
+    - name: grpc
+      port: 9104
+      targetPort: grpc

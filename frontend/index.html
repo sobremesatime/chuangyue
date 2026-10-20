@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="窗月 · 一扇窗，一轮月，看见更远的世界" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+    <title>窗月</title>
+    <script>
+      // 首屏防闪：在样式加载前就定好皮肤。逻辑与 stores/theme.ts 保持一致。
+      (function () {
+        try {
+          var saved = localStorage.getItem('cy-theme')
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          var dark = saved === 'dark' || (saved !== 'light' && prefersDark)
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        } catch (error) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
+    <style>
+      /* 样式表加载完成前的底色，避免暗色模式下先闪白 */
+      html {
+        background: #000000;
+      }
+      html[data-theme='light'] {
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

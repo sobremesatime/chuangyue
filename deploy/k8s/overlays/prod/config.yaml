@@ -1,0 +1,146 @@
+# 窗月 · 生产环境配置（覆盖 base 的 config.yaml）
+#
+# 与 base 的差异仅在于「运行档位」：env=prod / mode=release / 日志 JSON / 连接池调大。
+# 主机名与端口保持一致（集群内 Service 名），避免与环境耦合。
+# 敏感项同样留空，由 Secret 注入。
+
+app:
+  name: chuangyue
+  env: prod
+  addr: ":8080"
+  mode: release
+  # 前面是接入层 web（Nginx）；填集群 Pod CIDR（k3s 默认 10.42.0.0/16），
+  # 让 ClientIP 从 X-Forwarded-For 最右侧取到真实客户端 IP。
+  trusted_proxies:
+    - 10.42.0.0/16
+
+log:
+  level: info
+  format: json
+  output: stdout
+
+mysql:
+  host: mysql
+  port: 3306
+  username: root
+  password: ""
+  database: chuangyue
+  charset: utf8mb4
+  max_idle_conns: 20
+  max_open_conns: 200
+  conn_max_lifetime: 1h
+  log_level: error
+
+interaction_mysql:
+  host: mysql
+  port: 3306
+  username: chy_interaction
+  password: ""
+  database: chuangyue_interaction
+  charset: utf8mb4
+  max_idle_conns: 20
+  max_open_conns: 200
+  conn_max_lifetime: 1h
+  log_level: error
+
+redis:
+  host: redis
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 200
+
+jwt:
+  access_secret: ""
+  refresh_secret: ""
+  access_expire: 15m
+  refresh_expire: 168h
+  issuer: chuangyue
+
+mail:
+  # 生产必须走 smtp：log 驱动只允许 dev，误配会让 user 服务启动即 Fatal（crash-loop）。
+  # 默认填 Resend：**无需备案**，因此免费域名 / 未备案域名也能用。
+  # 若要改用阿里云邮件推送：杭州要求发信域名已备案，未备案请用新加坡 smtpdm-ap-southeast-1.aliyuncs.com。
+  #（备案相关约束详见本地运维文档，该目录不入库。）
+  # 口令走 Secret 的 CHUANGYUE_MAIL_PASSWORD，因此这里保留空键 password 以便被环境变量覆盖。
+  # Resend 的两个易错点：username **固定就是 resend**（不是邮箱地址）；password 是 **API Key**（不是登录密码）。
+  # from 必须来自已在 Resend 控制台验证过的域名，否则会被拒发。
+  driver: smtp
+  host: smtp.resend.com
+  port: 465
+  tls: ssl
+  username: resend
+  password: ""                                  # 由 CHUANGYUE_MAIL_PASSWORD 注入（Resend API Key）
+  from: "窗月 <no-reply@chuangyue.me>"          # 需先在 Resend 控制台验证该域名
+  # 必须小于网关的 5s 跨服务超时（pkg/grpcclient 的一元调用上限），否则慢投递会被网关
+  # 先掐断成笼统的 DeadlineExceeded，且验证码与冷却不会释放。
+  timeout: 4s
+
+verify:
+  code_ttl: 5m
+  code_cooldown: 60s
+  code_max_try: 5
+  email_hourly_limit: 5
+  ip_hourly_limit: 20
+
+upload:
+  driver: local
+  local_dir: "./uploads"
+  max_size_mb: 2048
+  chunk_size_mb: 8
+  allowed_ext: [".mp4", ".mov", ".mkv", ".webm"]
+  minio:
+    endpoint: minio:9000
+    access_key: ""
+    secret_key: ""
+    bucket: chuangyue
+    use_ssl: false
+    region: us-east-1
+    public_url: ""
+
+kafka:
+  brokers: ["kafka:9092"]
+  topic: chuangyue.transcode.task
+  group: chuangyue-transcode-worker
+  stat_topic: chuangyue.video.stat
+  stat_group: chuangyue-video-stat-sync
+  # 视频删除事件：视频域生产、互动域消费（清理该视频的评论 / 弹幕 / 点赞 / 收藏 / 历史等关联数据）。
+  delete_topic: chuangyue.video.deleted
+  delete_group: chuangyue-interaction-purge
+
+etcd:
+  endpoints: ["etcd:2379"]
+
+ratelimit:
+  enabled: true
+  ip_per_second: 20
+  ip_burst: 40
+  user_per_second: 10
+  user_burst: 20
+
+circuitbreaker:
+  enabled: true
+  failure_threshold: 5
+  open_timeout: 10s
+  half_open_max: 1
+
+# 周期任务（robfig/cron）：feed 预热首页热度榜、video 落库播放量与清理过期上传。
+jobs:
+  enabled: true
+  rank_refresh: "*/1 * * * *"
+  view_count_flush: "*/10 * * * * *"
+  upload_cleanup: "0 * * * *"
+
+transcode:
+  ffmpeg_path: ffmpeg
+  ffprobe_path: ffprobe
+  output_dir: "./uploads/hls"
+  segment_sec: 6
+  max_retry: 2
+  max_pending: 10
+  preset: veryfast
+  renditions:
+    - { name: "480p", height: 480, bitrate: "1400k" }
+    - { name: "720p", height: 720, bitrate: "2800k" }
+    - { name: "1080p", height: 1080, bitrate: "5000k" }
+    - { name: "2160p", height: 2160, bitrate: "16000k" }

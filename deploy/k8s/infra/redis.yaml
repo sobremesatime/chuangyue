@@ -1,0 +1,118 @@
+# 窗月 · Redis 7（单实例，AOF 持久化）
+#
+# 用途：邮箱验证码、刷新令牌重放标记、限流计数、推荐缓存、转码槽位信号量。
+# 这些数据要么短期（验证码 / 限流），要么可由业务重建（缓存），
+# 因此不做主从、不做哨兵——单实例 + AOF 已经足够撑住演示规模。
+#
+# 口令：从 Secret 的 CHUANGYUE_REDIS_PASSWORD 取。
+# **留空 = 完全不启用认证**（启动脚本会跳过 --requirepass，而不是传一个空串——
+# 空串在 Redis 里的语义容易踩坑，见下面 command 的注释）。
+# 仅在内网 ClusterIP 下可以不设密码；生产建议填一个随机值，应用侧会自动带上 AUTH。
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: cache
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # 用 sh -c 展开环境变量：Secret 里的口令不能直接写进 args（否则会出现在 ps 里）。
+          # 分支写法是为了让「没配口令」成为一个明确形态：不传 --requirepass，
+          # 而不是传空串（空串是否等价于无密码在各版本上并不值得赌）。
+          command: ["sh", "-c"]
+          args:
+            - |
+              if [ -n "$REDIS_PASSWORD" ]; then
+                exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"
+              else
+                exec redis-server --appendonly yes
+              fi
+          ports:
+            - name: redis
+              containerPort: 6379
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chuangyue-secrets
+                  key: CHUANGYUE_REDIS_PASSWORD
+            - name: TZ
+              value: Asia/Shanghai
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  if [ -n "$REDIS_PASSWORD" ]; then
+                    redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG
+                  else
+                    redis-cli ping | grep -q PONG
+                  fi
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  if [ -n "$REDIS_PASSWORD" ]; then
+                    redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG
+                  else
+                    redis-cli ping | grep -q PONG
+                  fi
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 2Gi

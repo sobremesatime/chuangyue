@@ -1,0 +1,648 @@
+/* ==========================================================================
+   窗月 · 全局样式与设计令牌
+   设计依据：窗月品牌标识（星紫 × 月白）× YouTube 产品视觉语言
+
+   规则：
+   - 所有颜色 / 圆角 / 间距 / 动效一律走下面 :root 里的 --cy-* 变量；
+     其他文件不得新增全局变量，也不得出现色值、圆角、时长的字面量。
+   - 深色模式（Logo 的「夜」）是默认皮肤；浅色模式（Logo 的「月白」）由
+     html[data-theme="light"] 激活，映射规则见下方第 2 节。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   0. 品牌标字体
+   站酷快乐体（ZCOOL KuaiLe，SIL OFL）子集化后只保留「窗月」两字，
+   因此文件只有几百字节。仅用于顶栏与登录弹框的品牌标，不参与正文排版。
+   -------------------------------------------------------------------------- */
+@font-face {
+  font-family: 'Chuangyue Brand';
+  src: url('../assets/fonts/chuangyue-brand.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --------------------------------------------------------------------------
+   1. 设计令牌 · 深色模式（默认）
+   -------------------------------------------------------------------------- */
+:root {
+  /* 色彩：页面底为纯黑，把亮度完全让给视频内容 */
+  --cy-bg: #000000;
+  /* 顶栏单列一档：紫调近黑，在纯黑页面上浮出一层，不用描边就能与内容区分 */
+  --cy-header-bg: #0c0a24;
+  --cy-surface: #17133a;
+  --cy-surface-2: #211d47;
+  --cy-pop-bg: #211d47;
+  --cy-border: #2a2656;
+  --cy-text: #f5f3ff;
+  --cy-text-secondary: #bdb7e3;
+  --cy-text-muted: #8a85ac;
+
+  /* 品牌紫 */
+  --cy-primary: #8b5cf6;
+  --cy-primary-hover: #a78bfa;
+  --cy-primary-strong: #a78bfa;
+  --cy-primary-soft: rgba(139, 92, 246, 0.16);
+  --cy-on-primary: #ffffff;
+  /* 深色底上的链接与强调文字用浅星紫，对比度比主色更高 */
+  --cy-accent: #c9bbfa;
+
+  /* 语义色：内敛，不与品牌紫抢注意力 */
+  --cy-success: #4ade80;
+  --cy-warning: #fbbf24;
+  --cy-danger: #ff6b85;
+  --cy-danger-soft: rgba(255, 107, 133, 0.18);
+
+  /* 骨架屏 / 滚动条 / 浮层：令牌化，避免换肤不彻底 */
+  --cy-skeleton-base: #211d47;
+  --cy-skeleton-shine: #302a60;
+  --cy-scrollbar-thumb: #2a2656;
+  --cy-scrollbar-thumb-hover: #3d3780;
+  --cy-shadow-pop: none;
+  scrollbar-color: var(--cy-scrollbar-thumb) transparent;
+  color-scheme: dark;
+}
+
+/* --------------------------------------------------------------------------
+   2. 设计令牌 · 浅色模式
+   data-theme="light" 由用户在顶栏手动切换；
+   .cy-theme-light 供登录弹框这类「固定浅色内芯」的局部区域复用，
+   让弹框在两种模式下都保持月白底 + 文字墨。
+   -------------------------------------------------------------------------- */
+:root[data-theme='light'],
+.cy-theme-light {
+  /* 页面底为纯白，与 YouTube 浅色主题一致 */
+  --cy-bg: #ffffff;
+  /* 顶栏保持纸白：纯白页面上，顶栏这一行仍有轻微的品牌色调 */
+  --cy-header-bg: #f6f4fb;
+  --cy-surface: #ffffff;
+  --cy-surface-2: #f1eefa;
+  --cy-pop-bg: #ffffff;
+  --cy-border: #e7e3f2;
+  --cy-text: #17133a;
+  --cy-text-secondary: #4a4568;
+  --cy-text-muted: #6e6b8a;
+
+  --cy-primary: #8b5cf6;
+  --cy-primary-hover: #7c46ec;
+  /* 浅色底上的文字 / 链接必须用深一档的紫，#8B5CF6 压白底对比度不达标 */
+  --cy-primary-strong: #6d44d6;
+  --cy-primary-soft: rgba(139, 92, 246, 0.1);
+  --cy-on-primary: #ffffff;
+  --cy-accent: #6d44d6;
+
+  --cy-success: #2fa36b;
+  --cy-warning: #b7791f;
+  --cy-danger: #e5486b;
+  --cy-danger-soft: rgba(229, 72, 107, 0.12);
+
+  --cy-skeleton-base: #ece8f5;
+  --cy-skeleton-shine: #f8f6fd;
+  --cy-scrollbar-thumb: #d8d3e8;
+  --cy-scrollbar-thumb-hover: #c2bade;
+  --cy-shadow-pop: 0 8px 24px rgba(23, 19, 58, 0.12);
+  scrollbar-color: var(--cy-scrollbar-thumb) transparent;
+  color-scheme: light;
+}
+
+/* --------------------------------------------------------------------------
+   3. 设计令牌 · 尺寸、字体、动效（与明暗模式无关）
+   -------------------------------------------------------------------------- */
+:root {
+  /* 布局 */
+  --cy-header-h: 56px;
+  --cy-nav-w: 240px;
+  --cy-nav-w-collapsed: 72px;
+  --cy-content-max: 1800px;
+  /* 内容区左右留白：≥1280px 时由媒体查询覆盖。给吸顶行等"需铺满整行"的组件复用 */
+  --cy-page-pad: var(--cy-space-5);
+  --cy-player-bg: #000000;
+  /* 卡片 hover 遮罩与时长标签：媒体层固定用黑系，不随皮肤变化 */
+  --cy-overlay: rgba(12, 10, 36, 0.55);
+  --cy-media-badge-bg: rgba(0, 0, 0, 0.7);
+  --cy-media-badge-text: #ffffff;
+
+  /* 间距刻度：8 的倍数 */
+  --cy-space-1: 4px;
+  --cy-space-2: 8px;
+  --cy-space-3: 12px;
+  --cy-space-4: 16px;
+  --cy-space-5: 24px;
+  --cy-space-6: 32px;
+  --cy-space-7: 48px;
+
+  /* 圆角：只用这五档，不够用就补档，不要随手写 6px */
+  --cy-radius-xs: 4px;
+  --cy-radius-sm: 8px;
+  --cy-radius-md: 12px;
+  --cy-radius-lg: 16px;
+  --cy-radius-full: 999px;
+  /* 品牌标圆角比例：Logo 是 58 → 15，占边长 26% */
+  --cy-radius-logo: 26%;
+
+  /* 字体：Sora 负责拉丁字母与数字，中文回退到系统字体栈 */
+  --cy-font-sans: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --cy-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* 品牌标专用字体，只覆盖「窗月」两字，未覆盖的字回退到系统字体栈 */
+  --cy-font-brand: 'Chuangyue Brand', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+
+  /* 动效 */
+  /* 月相循环：默认头像这类需要「缓慢呼吸」的场景专用，比常规过渡慢一个量级 */
+  --cy-dur-moon: 4s;
+  --cy-dur-fast: 120ms;
+  --cy-dur-base: 180ms;
+  --cy-dur-slow: 240ms;
+  --cy-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* --------------------------------------------------------------------------
+   4. 基础重置
+   -------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+html {
+  background: var(--cy-bg);
+}
+
+body {
+  margin: 0;
+  background: var(--cy-bg);
+  color: var(--cy-text);
+  font-family: var(--cy-font-sans);
+  font-size: 14px;
+  line-height: 22px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+img,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+/* 键盘焦点：全站统一圆环，鼠标点击不出现 */
+:focus-visible {
+  outline: 2px solid var(--cy-primary);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   5. 字号阶梯（由原来的 8~9 级收敛为 6 级）
+   -------------------------------------------------------------------------- */
+.cy-display {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 700;
+}
+
+.cy-title {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.cy-subtitle {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.cy-body {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+}
+
+.cy-label {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--cy-text-secondary);
+}
+
+.cy-caption {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--cy-text-muted);
+}
+
+/* 数字与英文走 Sora，等宽数字避免播放量跳动 */
+.cy-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   6. 布局容器与栅格
+   -------------------------------------------------------------------------- */
+.cy-container {
+  width: 100%;
+  max-width: var(--cy-content-max);
+  margin: 0 auto;
+  padding: 0 var(--cy-page-pad);
+}
+
+.cy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--cy-space-5) var(--cy-space-4);
+}
+
+.cy-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --------------------------------------------------------------------------
+   7. 按钮
+   -------------------------------------------------------------------------- */
+.cy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: var(--cy-radius-md);
+  background: transparent;
+  color: var(--cy-text);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color var(--cy-dur-fast) var(--cy-ease),
+    color var(--cy-dur-fast) var(--cy-ease),
+    border-color var(--cy-dur-fast) var(--cy-ease),
+    opacity var(--cy-dur-fast) var(--cy-ease);
+}
+
+.cy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cy-btn--primary {
+  background: var(--cy-primary);
+  color: var(--cy-on-primary);
+}
+
+.cy-btn--primary:hover:not(:disabled) {
+  background: var(--cy-primary-hover);
+}
+
+.cy-btn--secondary {
+  background: var(--cy-surface-2);
+  color: var(--cy-text);
+}
+
+.cy-btn--secondary:hover:not(:disabled) {
+  background: var(--cy-border);
+}
+
+.cy-btn--outline {
+  border: 1px solid var(--cy-border);
+  color: var(--cy-text);
+}
+
+.cy-btn--outline:hover:not(:disabled) {
+  border-color: var(--cy-accent);
+  color: var(--cy-accent);
+}
+
+.cy-btn--ghost {
+  color: var(--cy-text-secondary);
+}
+
+.cy-btn--ghost:hover:not(:disabled) {
+  background: var(--cy-surface-2);
+  color: var(--cy-text);
+}
+
+.cy-btn--danger {
+  background: var(--cy-danger);
+  color: var(--cy-on-primary);
+}
+
+.cy-btn--pill {
+  border-radius: var(--cy-radius-full);
+}
+
+.cy-btn--block {
+  width: 100%;
+}
+
+.cy-btn--lg {
+  height: 48px;
+  font-size: 15px;
+}
+
+.cy-btn--sm {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.cy-btn--icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--cy-radius-full);
+}
+
+/* 选中态：分类 chips 这类开关型按钮复用 */
+.cy-btn.is-active {
+  background: var(--cy-primary);
+  color: var(--cy-on-primary);
+}
+
+/* --------------------------------------------------------------------------
+   8. 表单
+   -------------------------------------------------------------------------- */
+.cy-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cy-space-2);
+}
+
+.cy-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--cy-border);
+  border-radius: var(--cy-radius-md);
+  background: var(--cy-surface-2);
+  color: var(--cy-text);
+  transition: border-color var(--cy-dur-fast) var(--cy-ease),
+    box-shadow var(--cy-dur-fast) var(--cy-ease);
+}
+
+.cy-input::placeholder {
+  color: var(--cy-text-muted);
+}
+
+.cy-input:focus {
+  outline: none;
+  border-color: var(--cy-primary);
+  box-shadow: 0 0 0 3px var(--cy-primary-soft);
+}
+
+.cy-input--invalid {
+  border-color: var(--cy-danger);
+}
+
+.cy-input--invalid:focus {
+  box-shadow: 0 0 0 3px var(--cy-danger-soft);
+}
+
+/* 带图标按钮的输入框（如密码的显示 / 隐藏） */
+.cy-input-wrap {
+  position: relative;
+}
+
+.cy-input-wrap .cy-input {
+  padding-right: 44px;
+}
+
+.cy-input-wrap__action {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--cy-radius-sm);
+  color: var(--cy-text-muted);
+  transition: color var(--cy-dur-fast) var(--cy-ease);
+}
+
+.cy-input-wrap__action:hover {
+  color: var(--cy-text);
+}
+
+.cy-field__error {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--cy-danger);
+}
+
+.cy-field__hint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--cy-text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   9. 提示条
+   -------------------------------------------------------------------------- */
+.cy-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cy-space-2);
+  padding: 10px 14px;
+  border-radius: var(--cy-radius-md);
+  border-left: 3px solid var(--cy-text-muted);
+  background: var(--cy-surface-2);
+  color: var(--cy-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.cy-alert--error {
+  border-left-color: var(--cy-danger);
+  color: var(--cy-danger);
+}
+
+.cy-alert--success {
+  border-left-color: var(--cy-success);
+  color: var(--cy-success);
+}
+
+.cy-alert--info {
+  border-left-color: var(--cy-accent);
+  color: var(--cy-accent);
+}
+
+/* --------------------------------------------------------------------------
+   10. 卡片、骨架屏、状态页
+   -------------------------------------------------------------------------- */
+.cy-card {
+  background: var(--cy-surface);
+  border-radius: var(--cy-radius-md);
+}
+
+.cy-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--cy-skeleton-base) 25%,
+    var(--cy-skeleton-shine) 37%,
+    var(--cy-skeleton-base) 63%
+  );
+  background-size: 400% 100%;
+  border-radius: var(--cy-radius-sm);
+  animation: cy-shimmer 1.4s linear infinite;
+}
+
+@keyframes cy-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+/* 月相加载：唯一允许的装饰性动效，同时承担「还在缓冲」的进度语义 */
+.cy-moon-pulse {
+  width: 40px;
+  height: 40px;
+  color: var(--cy-media-badge-text);
+  animation: cy-moon-pulse 1.6s var(--cy-ease) infinite;
+}
+
+@keyframes cy-moon-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.cy-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cy-space-3);
+  padding: var(--cy-space-7) var(--cy-space-5);
+  text-align: center;
+}
+
+.cy-state__title {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.cy-state__desc {
+  max-width: 460px;
+  color: var(--cy-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* --------------------------------------------------------------------------
+   11. 文本截断
+   -------------------------------------------------------------------------- */
+.cy-clamp-1,
+.cy-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cy-clamp-1 {
+  -webkit-line-clamp: 1;
+}
+
+.cy-clamp-2 {
+  -webkit-line-clamp: 2;
+}
+
+/* --------------------------------------------------------------------------
+   12. 滚动条
+   -------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: var(--cy-radius-full);
+  background: var(--cy-scrollbar-thumb);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cy-scrollbar-thumb-hover);
+}
+
+/* --------------------------------------------------------------------------
+   13. 响应式与动效偏好
+   -------------------------------------------------------------------------- */
+@media (min-width: 1280px) {
+  :root {
+    --cy-page-pad: var(--cy-space-6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

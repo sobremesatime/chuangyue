@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 64" fill="none" role="img" aria-label="窗月 CHUANGYUE">
+  <title>窗月 CHUANGYUE 横版组合标</title>
+  <defs>
+    <mask id="cy-bite">
+      <rect width="64" height="64" fill="white" />
+      <circle cx="49.55" cy="14.45" r="14" fill="black" />
+    </mask>
+  </defs>
+
+  <!-- 图形标 -->
+  <rect x="3" y="3" width="58" height="58" rx="15" fill="#8B5CF6" />
+  <circle cx="40" cy="24" r="14" fill="#FFFFFF" mask="url(#cy-bite)" />
+
+  <!-- 中文标：继承 currentColor，便于放在深色底上 -->
+  <text x="71" y="40"
+        font-family="'Noto Sans SC','PingFang SC','Source Han Sans SC','Microsoft YaHei',sans-serif"
+        font-size="29" font-weight="800" letter-spacing="1" fill="currentColor">窗月</text>
+
+  <!-- 英文标：品牌辅助灰 -->
+  <text x="73" y="53"
+        font-family="'Sora','Manrope','Avenir Next','Segoe UI',sans-serif"
+        font-size="8.5" font-weight="600" letter-spacing="4" fill="#7A7794">CHUANGYUE</text>
+</svg>

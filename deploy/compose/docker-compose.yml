@@ -1,0 +1,414 @@
+# 窗月 · 本地开发依赖与应用服务
+#
+# 基础依赖（MySQL、Redis、Etcd）——微服务运行必需，默认拉起：
+#   docker compose -f deploy/compose/docker-compose.yml up -d
+#
+# 可选依赖（MinIO、Kafka、Elasticsearch）挂在 full profile 下，按需启动：
+#   Kafka：异步转码流水线投递与消费任务所需
+#   MinIO：对象存储驱动（upload.driver = minio）使用；默认本地磁盘则不需要
+#   Elasticsearch：检索域的独立索引；不起时搜索会自动退回库内 LIKE
+#   docker compose -f deploy/compose/docker-compose.yml --profile full up -d
+#   只起其中一个：... --profile full up -d kafka
+#
+# 应用服务（网关 + 五个服务 + 转码 Worker）挂在 app profile 下，一键起全栈：
+#   docker compose -f deploy/compose/docker-compose.yml --profile app up -d --build
+#   要走异步转码链路时把 full 一起带上（Kafka）：
+#   docker compose -f deploy/compose/docker-compose.yml --profile full --profile app up -d --build
+#
+# 可观测栈（Prometheus + Alertmanager + Grafana + Jaeger）挂在 monitoring profile 下：抓取各服务 /metrics、
+# 按规则判定告警并交 Alertmanager 处置、接收 OTLP 链路 span：
+#   docker compose -f deploy/compose/docker-compose.yml --profile app --profile monitoring up -d
+#   看板 http://127.0.0.1:3000（首次登录 admin），Prometheus http://127.0.0.1:9090，
+#   告警 http://127.0.0.1:9093，Jaeger http://127.0.0.1:16686
+
+name: chuangyue
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: chuangyue-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: chuangyue
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 首次启动时自动执行 migrations 下的建表脚本
+      - ../../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: chuangyue-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 服务注册中心：各微服务启动时把自身地址写入 Etcd，调用方按服务名发现实例。
+  # 用户 / 视频 / 互动三域拆分后它是运行必需，故与 MySQL、Redis 同列基础依赖。
+  etcd:
+    image: bitnami/etcd:latest
+    container_name: chuangyue-etcd
+    restart: unless-stopped
+    environment:
+      ALLOW_NONE_AUTHENTICATION: "yes"
+      ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ports:
+      - "2379:2379"
+
+  # ---------------- 以下为可选依赖（full profile） ----------------
+
+  minio:
+    image: minio/minio:latest
+    container_name: chuangyue-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    profiles: ["full"]
+
+  # 单节点 KRaft 模式（无需 ZooKeeper），供转码任务投递与消费使用。
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: chuangyue-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: "0"
+      KAFKA_PROCESS_ROLES: controller,broker
+      # 单节点：controller 仲裁地址指向容器自身，避免依赖容器名解析
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@127.0.0.1:9093
+      # 双监听器：客户端拿到的 metadata 地址必须「对它自己可达」，因此按来源分开暴露。
+      #   EXTERNAL 127.0.0.1:9092 —— 宿主机上 go run 的网关 / Worker 接入；
+      #   INTERNAL kafka:9094    —— compose 网络内的服务（网关、视频、互动、Worker）接入。
+      # 只留一个监听器无法同时满足两侧（容器内连不上 127.0.0.1，宿主机解析不了 kafka）。
+      KAFKA_LISTENERS: EXTERNAL://:9092,INTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://127.0.0.1:9092,INTERNAL://kafka:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # 单节点下副本因子必须为 1，否则内部主题无法创建
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      # 只把宿主机用的 EXTERNAL 端口映射出来；INTERNAL 仅在 compose 网络内可达。
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    profiles: ["full"]
+
+  # 单节点 Elasticsearch：搜索域的检索索引。
+  #
+  # 为什么关掉安全插件：本地 compose 里它只监听容器网络 + 宿主机回环，
+  # 打开 xpack.security 反而要先处理证书与初始口令，对开发环境是纯负担。
+  # **生产环境不要把「关闭安全插件」的拓扑直接暴露到公网**——
+  # 本仓库的 k8s infra 清单同样关闭，前提是 ClusterIP + 内网。
+  #
+  # 索引由视频变更事件异步追平（Kafka），ES 未就绪时搜索接口会自动退回库内 LIKE。
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: chuangyue-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      # 单节点开发环境给小堆：默认按物理内存的一半分配，容易把开发机拖垮。
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      TZ: Asia/Shanghai
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    profiles: ["full"]
+
+  # ---------------- 应用服务（--profile app） ----------------
+  #
+  # 为什么单独一个 profile：默认的 `up -d` 仍只起基础设施，服务照旧可以 `go run` 本地调试；
+  # 想一键起全栈再用 --profile app。构建镜像耗时较长，不适合放进默认路径。
+  #
+  # 关键约定：每个服务的 -advertise 必须是「容器网络内可达」的地址，因此填 compose 服务名
+  # （如 user:9103）；沿用默认的 127.0.0.1 会把容器自身的回环地址注册进 Etcd，别的容器拨不通。
+
+  user:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: user }
+    container_name: chuangyue-user
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "-addr", ":9103", "-advertise", "user:9103", "-metrics-addr", ":9203"]
+    # Prometheus 指标端口（映射到宿主机，便于本地起 Prometheus 抓取）
+    ports:
+      - "9203:9203"
+    depends_on: [mysql, redis, etcd]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # 与 gateway / video / transcode-worker 共享上传目录：本服务写头像、网关静态托管。
+      # 不共享的话头像写进 user 容器自己的盘，前端拿到 /uploads/xxx 必然 404。
+      - uploads_data:/app/uploads
+
+  video:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: video }
+    container_name: chuangyue-video
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "-addr", ":9102", "-advertise", "video:9102", "-metrics-addr", ":9202"]
+    # Prometheus 指标端口（映射到宿主机，便于本地起 Prometheus 抓取）
+    ports:
+      - "9202:9202"
+    # 不依赖 kafka：Kafka 在 full profile（可选），而该生产者是惰性连接、暂不可用不影响启动
+    depends_on: [mysql, etcd]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # 与 gateway / transcode-worker 共享上传目录：视频服务写、网关静态托管、Worker 读源文件
+      - uploads_data:/app/uploads
+
+  interaction:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: interaction }
+    container_name: chuangyue-interaction
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "-addr", ":9101", "-advertise", "interaction:9101", "-metrics-addr", ":9201"]
+    # Prometheus 指标端口（映射到宿主机，便于本地起 Prometheus 抓取）
+    ports:
+      - "9201:9201"
+    # 互动域物理拆库后只连自己的库（interaction_mysql 指向 chuangyue_interaction），
+    # 并通过 gRPC 向 video 取视频信息；Kafka 仅用于计数回写（生产者惰性连接，可不依赖）。
+    depends_on: [mysql, etcd, video]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+  feed:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: feed }
+    container_name: chuangyue-feed
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "-addr", ":9104", "-advertise", "feed:9104", "-metrics-addr", ":9204"]
+    # Prometheus 指标端口（映射到宿主机，便于本地起 Prometheus 抓取）
+    ports:
+      - "9204:9204"
+    depends_on: [redis, etcd]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+  search:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: search }
+    container_name: chuangyue-search
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "-addr", ":9105", "-advertise", "search:9105", "-metrics-addr", ":9205"]
+    # Prometheus 指标端口（映射到宿主机，便于本地起 Prometheus 抓取）
+    ports:
+      - "9205:9205"
+    # 不 depends_on elasticsearch：ES 在 full profile，跨 profile 的依赖无法解析。
+    # ES 未就绪时搜索自动退回库内 LIKE，起来后由索引同步链路自动接上。
+    depends_on: [etcd, video]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+  transcode-worker:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: transcode-worker }
+    container_name: chuangyue-transcode-worker
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "-metrics-addr", ":9206"]
+    # Prometheus 指标端口（映射到宿主机，便于本地起 Prometheus 抓取）
+    ports:
+      - "9206:9206"
+    # 只依赖 etcd：Kafka（full profile）与 video（app profile）分属不同 profile，
+    # 跨 profile 的 depends_on 无法解析。Worker 启动时若 Kafka 未就绪会退出并由
+    # restart 策略退避重启，因此顺序不影响最终可用。
+    depends_on: [etcd]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # 读视频服务落盘的源文件、写 HLS 产物
+      - uploads_data:/app/uploads
+
+  gateway:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { SERVICE: gateway }
+    container_name: chuangyue-gateway
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml"]
+    ports:
+      - "8080:8080"
+    depends_on: [user, video, interaction, feed, search, etcd]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # 静态托管 /uploads，因此必须与 video / transcode-worker 共享同一份产物
+      - uploads_data:/app/uploads
+
+  # ---------------- 监控栈（--profile monitoring） ----------------
+  #
+  # 指标埋点（pkg/metrics）解决了「谁产出数据」，这一层解决「谁收数据、怎么看、何时该报警」：
+  # Prometheus 周期抓取网关与各服务的 /metrics 并按 alerts.yml 判定告警，Alertmanager 负责
+  # 分组 / 抑制 / 通知，Grafana 已预置数据源与两块看板，起来即用。
+  #
+  # 为什么单独一个 profile：它属于观察面、不参与业务，本地调试没必要背这个负担。
+  #   docker compose -f deploy/compose/docker-compose.yml --profile monitoring up -d
+  #
+  # 抓取目标写的是 compose 服务名（gateway / user / …），因此要与 --profile app 一起起，
+  # 否则业务容器不在，Prometheus 里对应 target 只会显示 DOWN。
+  #
+  # 两者都不 depends_on 业务服务：抓取方不该被目标拖住——目标没起时「看得见它 DOWN」
+  # 本身就是有用的信号，比整层起不来要好。
+  #
+  # 凭据：不把口令写进文件。Grafana 首次登录用 admin，口令取环境变量
+  # GRAFANA_ADMIN_PASSWORD（未设置时回落到 Grafana 默认的 admin，且会要求首次登录后修改）；
+  # 生产环境必须显式设置。
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.1.0
+    container_name: chuangyue-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 本地观察 7 天足够；生产按容量规划调整
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 告警规则与抓取配置分开挂：改规则只动这一个文件（由 prometheus.yml 的 rule_files 引入）
+      - ../monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+
+  # 告警的处置层：接收 Prometheus 判定出的告警，做去重 / 分组 / 抑制 / 通知。
+  # 本地不外发通知（receiver 不带渠道），只在 UI 里看：http://127.0.0.1:9093
+  # 规则文件在 prometheus 侧（alerts.yml），本服务只管「怎么吵」。
+  alertmanager:
+    profiles: ["monitoring"]
+    image: prom/alertmanager:v0.28.1
+    container_name: chuangyue-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # 外部地址：决定通知里「查看详情」链接指向哪。本地固定成宿主机映射端口，
+      # 不设的话容器会用自己的主机名拼链接，点开是 404 / 无法解析。
+      - --web.external-url=http://localhost:9093
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # 持久化告警状态与静默记录：重启容器不丢「哪些已确认 / 已静默」
+      - alertmanager_data:/alertmanager
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.5.0
+    container_name: chuangyue-grafana
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # 关掉自助注册：账号由运维创建，不给公开入口
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      # 数据源 + 看板装载：随容器启动自动生效，无需手工导入。
+      # 只挂这两个子目录（而不是整个 provisioning 目录），以免盖掉镜像自带的
+      # plugins / alerting 等子目录——盖掉后 Grafana 会在启动日志里报「目录不存在」。
+      - ../monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
+  # Jaeger 一站式镜像：OTLP 接收 + 查询 UI + 内存存储，供本地观察跨服务链路。
+  # 内存存储意味着重启即丢——只适合开发；生产应换成带持久化后端的部署（ClickHouse / ES）。
+  jaeger:
+    profiles: ["monitoring"]
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: chuangyue-jaeger
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # 打开 OTLP 接收（4317 gRPC / 4318 HTTP）。
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # 查询 UI
+      - "4317:4317"    # OTLP gRPC：各服务经它上报 span
+      - "4318:4318"    # OTLP HTTP：备用入口
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:
+  kafka_data:
+  es_data:
+  uploads_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

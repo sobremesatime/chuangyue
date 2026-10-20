@@ -1,0 +1,249 @@
+syntax = "proto3";
+
+package user.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/sobremesatime/chuangyue/api/gen/user/v1;userv1";
+
+// UserBrief 是跨服务展示用户所需的最小信息。
+//
+// 对应当前互动侧仓储里 JOIN `user` 表取出的昵称与头像，
+// 拆分后由用户服务统一提供，避免各服务各自读用户表。
+message UserBrief {
+  int64  id       = 1;
+  string username = 2;
+  string nickname = 3;
+  string avatar   = 4;
+}
+
+// UserInfo 是用户的完整对外信息，供网关的用户资料读写路径使用。
+//
+// 字段与 internal/user/dto.UserInfo 一一对应：生日以 YYYY-MM-DD 字符串对外
+// （未填写为空串），年龄由生日实时推算，两者都是展示值；password_hash 绝不进契约。
+message UserInfo {
+  int64  id        = 1;
+  string username  = 2;
+  string email     = 3;
+  string nickname  = 4;
+  string avatar    = 5;
+  string signature = 6;
+  int32  gender    = 7;
+  string birthday  = 8; // YYYY-MM-DD；未填写为空串
+  int32  age       = 9;
+  string school    = 10;
+  string location  = 11;
+  int32  role      = 12;
+  google.protobuf.Timestamp created_at = 13;
+  // status 是账号状态（1 正常 / 0 已禁用）。管理端列表要据此显示封禁态；
+  // 本人资料里它恒为 1（禁用的账号根本登不进来），保留在同一个结构里以免再开一套 AdminUser 消息。
+  int32  status    = 14;
+}
+
+message GetUsersRequest {
+  repeated int64 ids = 1;
+}
+
+message GetUsersResponse {
+  repeated UserBrief users = 1;
+}
+
+message GetProfileRequest {
+  reserved 1; // 原 user_id：查看的是「当前登录用户」，身份改由 gRPC metadata 透传
+}
+
+message GetProfileResponse {
+  UserInfo user = 1;
+}
+
+// UpdateProfileRequest 是部分更新：字段用 proto3 optional 表达「未传 / 传空值」，
+// 与 dto.UpdateProfileRequest 的指针语义一致——缺失表示不修改，传空串表示清空。
+message UpdateProfileRequest {
+  reserved 1; // 原 user_id：改的是「当前登录用户」，身份改由 metadata 透传
+  optional string username  = 2;
+  optional string nickname  = 3;
+  optional string signature = 4;
+  optional int32  gender    = 5;
+  optional string birthday  = 6;
+  optional string school    = 7;
+  optional string location  = 8;
+}
+
+message UpdateProfileResponse {
+  UserInfo user = 1;
+}
+
+message ChangePasswordRequest {
+  reserved 1; // 原 user_id：同上
+  string old_password = 2;
+  string new_password = 3;
+}
+
+message ChangePasswordResponse {
+  UserInfo user = 1;
+}
+
+// UploadAvatar 是客户端流式：首帧为元信息，其后为头像字节。
+//
+// 之所以用流式而不是单个 bytes 字段：与服务端硬约束一致（带字节体的 RPC 必须
+// 客户端流式，单条 gRPC 消息默认上限 4MB），与视频域 UploadVideo / PutPart 同构。
+message UploadAvatarFrame {
+  oneof payload {
+    UploadAvatarMeta meta  = 1;
+    bytes            chunk = 2;
+  }
+}
+
+message UploadAvatarMeta {
+  reserved 1; // 原 user_id：换的是「当前登录用户」的头像，身份走 metadata
+  string filename = 2;
+  int64  size     = 3;
+}
+
+message UploadAvatarResponse {
+  UserInfo user = 1;
+}
+
+// ============================================================
+// 管理端：用户管理（仅网关的 admin 分组可调用）
+// ============================================================
+
+// AdminListUsersRequest 是用户管理列表的查询条件。
+//
+// keyword 对用户名 / 邮箱 / 昵称作子串匹配；role / status 为可选过滤（不传 = 全部），
+// 用 proto3 optional 表达「未传」，避免 0（普通用户 / 已禁用）被误当成「不过滤」。
+message AdminListUsersRequest {
+  int32  page      = 1;
+  int32  page_size = 2;
+  string keyword   = 3;
+  optional int32 role   = 4; // 0 普通用户 / 1 管理员
+  optional int32 status = 5; // 0 已禁用 / 1 正常
+}
+
+message AdminListUsersResponse {
+  repeated UserInfo users = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+// AdminUpdateUserRequest 修改指定用户的账号状态 / 角色。
+//
+// 两个字段都可选，传了才改；空请求会被拒绝（避免一次无意义的写）。
+// 不允许改自己：否则管理员可以把自己降级或封禁，把自己锁在门外。
+message AdminUpdateUserRequest {
+  int64  id     = 1;
+  optional int32 status = 2;
+  optional int32 role   = 3;
+}
+
+message AdminUpdateUserResponse {
+  UserInfo user = 1;
+}
+
+// ============================================================
+// AuthService：身份建立与令牌签发（匿名可调用）
+// ============================================================
+
+// SendCode 的两个用途的语义差异（与服务端实现一致）：
+// register 在邮箱已注册时返回「已被注册」；reset 无论是否注册都返回成功——
+// 后者必须如此，否则这个接口就成了「批量探测哪些邮箱注册过」的工具。
+message SendCodeRequest {
+  string email   = 1;
+  string ip      = 2;
+  // purpose 取值 register / reset，必须成为验证码存储 key 的一部分，
+  // 否则会出现「用注册码去重置密码」这类跨用途越权。
+  string purpose = 3;
+}
+
+message SendCodeResponse {
+  int64 expires_in = 1;
+  int64 cooldown   = 2;
+}
+
+message RegisterRequest {
+  string email    = 1;
+  string code     = 2;
+  string password = 3;
+  string nickname = 4;
+}
+
+message RegisterResponse {
+  UserInfo user = 1;
+}
+
+// LoginRequest 的 account 同时支持用户名与邮箱：含 @ 按邮箱查，否则按用户名查。
+message LoginRequest {
+  string account  = 1;
+  string password = 2;
+}
+
+// LoginResponse 的 refresh_token 由网关写入 HttpOnly Cookie，
+// refresh_expires_in 供网关设置 Cookie 的 Max-Age。
+message LoginResponse {
+  string access_token       = 1;
+  string token_type         = 2;
+  int64  expires_in         = 3;
+  string refresh_token      = 4;
+  int64  refresh_expires_in = 5;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message RefreshResponse {
+  string access_token       = 1;
+  string token_type         = 2;
+  int64  expires_in         = 3;
+  string refresh_token      = 4;
+  int64  refresh_expires_in = 5;
+}
+
+// ResetPasswordRequest 重置密码（忘记密码通道，匿名可调用）。
+//
+// 没有 old_password：证明身份靠的是发给该邮箱的一次性验证码。
+// 成功后服务端会把该用户的令牌版本 +1，使其此前签发的刷新令牌全部失效，
+// 因此**不返回令牌**——用户需要用新密码重新登录，这也正是「旧会话已被吊销」的直接体现。
+message ResetPasswordRequest {
+  string email        = 1;
+  string code         = 2;
+  string new_password = 3;
+}
+
+message ResetPasswordResponse {}
+
+// UserService 承载用户资料的读路径（跨服务展示信息）与自我管理写路径。
+service UserService {
+  // GetUsers 批量取用户简要信息，供视频作者、评论作者、通知触发者等场景使用。
+  // 用批量而非单条，避免调用方逐个查询造成 N+1。
+  rpc GetUsers(GetUsersRequest) returns (GetUsersResponse);
+  // GetProfile 返回单个用户的完整资料。
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+  // UpdateProfile 部分更新个人资料，返回更新后的完整资料。
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+  // ChangePassword 修改密码（需校验当前密码），返回更新后的完整资料。
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+  // UploadAvatar 上传 / 更换头像（客户端流式），返回更新后的完整资料。
+  rpc UploadAvatar(stream UploadAvatarFrame) returns (UploadAvatarResponse);
+
+  // ---- 管理端：用户管理（鉴权在网关的 admin 分组，服务端不再重复判角色）----
+  // AdminListUsers 分页查询全部用户，支持关键词与角色 / 状态过滤。
+  rpc AdminListUsers(AdminListUsersRequest) returns (AdminListUsersResponse);
+  // AdminUpdateUser 修改指定用户的账号状态或角色（不允许改自己）。
+  rpc AdminUpdateUser(AdminUpdateUserRequest) returns (AdminUpdateUserResponse);
+}
+
+// AuthService 承载身份建立与令牌签发，由网关的匿名认证接口翻译调用。
+service AuthService {
+  // SendCode 按用途（register / reset）生成验证码并投递到用户邮箱。
+  rpc SendCode(SendCodeRequest) returns (SendCodeResponse);
+  // Register 校验验证码并注册新用户。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Login 校验账号密码并签发访问令牌与刷新令牌。
+  rpc Login(LoginRequest) returns (LoginResponse);
+  // Refresh 用刷新令牌换取新的访问令牌，并轮换刷新令牌。
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+  // ResetPassword 用邮箱验证码重置密码；成功后此前签发的刷新令牌全部失效。
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+}

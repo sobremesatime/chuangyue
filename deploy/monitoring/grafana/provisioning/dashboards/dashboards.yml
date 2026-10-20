@@ -1,0 +1,18 @@
+# 窗月 · Grafana 看板装载
+#
+# 以文件方式提供看板（`grafana/dashboards/*.json`）：看板随仓库走版本管理，
+# 重建容器即恢复，不会被 Grafana 的 SQLite 卷「锁」在某个手改版本上。
+# allowUiUpdates: true 仅为了本地调看板方便——改完记得回写到仓库里的 JSON，否则重启就丢了。
+
+apiVersion: 1
+
+providers:
+  - name: chuangyue
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

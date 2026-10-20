@@ -1,0 +1,202 @@
+# 窗月 · 配置模板
+# 复制为 configs/dev/config.yaml 后按需修改。
+# 真实密码不要提交到 Git，优先用环境变量覆盖。
+
+app:
+  name: chuangyue
+  env: dev              # dev / test / prod
+  addr: ":8080"         # 网关监听地址
+  mode: debug           # debug / release
+  # 可信反向代理的 IP / CIDR；留空 = 不信任任何代理（ClientIP 取直连地址）。
+  # 网关前面挂了 Nginx 时必须填它的地址，否则按 IP 的限流会把所有请求算成一个来源。
+  trusted_proxies: []
+
+log:
+  level: info           # debug / info / warn / error
+  format: console       # console / json
+  output: stdout        # stdout 或文件路径
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  username: root
+  password: "root123456"
+  database: chuangyue
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  log_level: info       # silent / error / warn / info
+
+# 互动域独立库（物理拆库）：互动服务只连这个库，不再读写视频库。
+# host 留空则回退上面的 mysql 配置（单库开发模式）。
+# 独立库与账号由 migrations/0015_split_interaction_db.sql 创建。
+interaction_mysql:
+  host: 127.0.0.1
+  port: 3306
+  username: chy_interaction
+  password: "chy_interaction_pwd"
+  database: chuangyue_interaction
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  log_level: info
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 100
+
+jwt:
+  # 生产环境务必替换，并通过环境变量注入
+  access_secret: "change-me-access-secret"
+  refresh_secret: "change-me-refresh-secret"
+  access_expire: 15m    # 访问令牌有效期
+  refresh_expire: 168h  # 刷新令牌有效期（7 天）
+  issuer: chuangyue
+
+mail:
+  # log：验证码打进服务日志，本地开发从日志取码。**仅 dev 环境允许**——
+  #      生产误配会被启动检查直接拒绝（fail-fast），避免「接口返回成功但用户永远收不到码」
+  #      这种最难排查的静默故障。
+  # smtp：真实投递。覆盖 QQ / 163 邮箱、阿里云邮件推送（DirectMail）等所有提供 SMTP 的厂商，
+  #       切换只改配置，业务代码不感知。
+  driver: log
+  from: "窗月 <no-reply@chuangyue.dev>"
+
+  # --- 以下仅 driver=smtp 使用（生产必配；开通步骤见文档「生产接入：阿里云邮件推送」）---
+  # host: smtpdm.aliyun.com  # 阿里云邮件推送（DirectMail，杭州机房）。地域不同换域名：
+  #                          #   新加坡   smtpdm-ap-southeast-1.aliyuncs.com
+  #                          #   美东     smtpdm-us-east-1.aliyuncs.com
+  #                          #   法兰克福 smtpdm-eu-central-1.aliyuncs.com
+  # port: 465                # 465 = 隐式 TLS（官方推荐）；80 / 25 为不加密通道，本项目不允许（tls=none 仅限本机）
+  # username: no-reply@mail.your-domain.com  # 必须填控制台里的「发信地址」
+  # password: ""             # 控制台「发信地址 → 设置 SMTP 密码」生成，**不是**阿里云账号登录密码；走 CHUANGYUE_MAIL_PASSWORD
+  # tls: ssl                 # ssl（465，连上即握手）/ starttls（587）/ none（不加密，仅限本机调试）
+  # timeout: 4s              # 投递总上限（连接 + 握手 + 认证 + 发送）；**必须小于网关的 5s 跨服务超时**，
+  #                          # 否则慢投递会被网关先掐断成笼统的 DeadlineExceeded，且验证码与冷却不会释放
+  # ⚠️ from 的地址必须与 username 完全一致：阿里云要求「认证用户名和发件人必须一致」，否则拒发。
+  # ⚠️ 阿里云杭州要求发信域名**已通过工信部备案**；免费域名 / 未备案域名走不通，改用下面这条：
+  # host: smtp.resend.com    # Resend（国际服务，无需备案，对免费域名友好）
+  # port: 465                # username 固定填 resend，password 填 Resend 的 API Key（不是登录密码）
+  # 或用阿里云新加坡：smtpdm-ap-southeast-1.aliyuncs.com（非中国内地地域，不需备案）
+
+verify:
+  code_ttl: 5m            # 验证码有效期
+  code_cooldown: 60s      # 同一邮箱两次发码的最小间隔
+  code_max_try: 5         # 单个验证码允许的错误次数
+  email_hourly_limit: 5   # 单邮箱每小时发码上限
+  ip_hourly_limit: 20     # 单 IP 每小时发码上限
+
+upload:
+  # 存储驱动：local 落本地磁盘，minio 落对象存储
+  driver: local
+  local_dir: "./uploads"
+  max_size_mb: 2048
+  chunk_size_mb: 8    # 分片上传的单片大小（MB）；minio 驱动下限 5MB
+  allowed_ext: [".mp4", ".mov", ".mkv", ".webm"]
+  # 对象存储驱动（driver=minio 时生效）；本地可用
+  # docker compose --profile full up -d minio 启动
+  minio:
+    endpoint: 127.0.0.1:9000
+    access_key: minioadmin
+    secret_key: minioadmin
+    bucket: chuangyue
+    use_ssl: false
+    region: us-east-1
+    public_url: ""      # 留空则用 http://endpoint/bucket；私有桶请改为 CDN 地址
+
+kafka:
+  # 异步转码任务的投递与消费；Brokers 为宿主机可达地址
+  brokers: ["127.0.0.1:9092"]
+  topic: chuangyue.transcode.task
+  group: chuangyue-transcode-worker
+  # 互动计数回写：互动域生产、视频域消费，用于回填视频库的计数只读副本（供热度排序）
+  stat_topic: chuangyue.video.stat
+  stat_group: chuangyue-video-stat-sync
+  # 视频删除事件：视频域生产、互动域消费（清理该视频的评论 / 弹幕 / 点赞 / 收藏 / 历史等关联数据）。
+  delete_topic: chuangyue.video.deleted
+  delete_group: chuangyue-interaction-purge
+  # 视频索引事件：视频域生产、搜索域消费（上架 / 编辑 / 下架 / 删除 / 转码完成时同步 ES 索引）。
+  index_topic: chuangyue.video.index
+  index_group: chuangyue-search-indexer
+
+# 检索后端：enabled=false 时沿用视频服务的库内 LIKE 检索（部署最轻）；
+# 打开后查询独立 ES 索引，支持相关度排序与中文短语匹配。
+# ES 不可用时检索会自动退回库内 LIKE，因此可用性不押在新组件上。
+search:
+  es:
+    enabled: false
+    addresses: ["http://127.0.0.1:9200"]   # compose 内为 http://elasticsearch:9200
+    index: chuangyue_videos
+    # 只有自建且开启了安全插件时才需要；本地 compose / k8s infra 清单默认关闭安全插件
+    username: ""
+    password: ""
+    timeout: 3s
+
+etcd:
+  # 服务注册中心：微服务把自身地址注册于此，调用方按服务名发现实例。
+  # Endpoints 为宿主机可达的客户端地址，与 compose 里的 etcd 服务一一对应
+  # （docker compose -f deploy/compose/docker-compose.yml --profile full up -d etcd）。
+  endpoints: ["127.0.0.1:2379"]
+
+# 网关限流：令牌桶，按 IP 与登录用户两个维度计数（需要 Redis）。
+# Redis 不可用时一律放行（fail-open），不因为限流组件故障把站点打死。
+ratelimit:
+  enabled: true
+  ip_per_second: 20       # 单 IP 令牌补充速率（个/秒）
+  ip_burst: 40            # 单 IP 桶容量（允许的突发额度）
+  user_per_second: 10     # 单登录用户速率（比 IP 更严：同一 NAT 下可能共享 IP）
+  user_burst: 20
+
+# 跨服务调用的熔断器：连续失败到阈值即打开，直接快速失败，不再白等超时。
+# 只统计可用性类错误（Unavailable / DeadlineExceeded / ResourceExhausted）。
+circuitbreaker:
+  enabled: true
+  failure_threshold: 5    # 连续失败多少次打开
+  open_timeout: 10s       # 打开后多久进入半开（放探测请求）
+  half_open_max: 1        # 半开状态下允许的并发探测数
+
+# 链路追踪（OpenTelemetry -> Jaeger）。endpoint 留空即禁用：
+# 此时各服务不产生 span，但日志里的 trace_id 照旧工作（由网关生成并透传）。
+# 启用后日志的 trace_id 与 Jaeger 里的 trace 是同一个值，可两头互跳。
+tracing:
+  endpoint: ""            # OTLP gRPC 地址，如 jaeger:4317 / 127.0.0.1:4317
+  sample_ratio: 1.0       # 根 span 采样率（0~1）；父子链路沿用父决策，不会断链
+
+# 周期任务（robfig/cron；表达式支持秒级字段，也兼容五段写法）。
+# 各服务只读自己用到的那几项：
+#   rank_refresh     → feed ：预热首页热度榜（与首页缓存 TTL 对齐，读请求恒命中缓存）
+#   view_count_flush → video：把 Redis 中缓冲的播放量增量批量落库（详情读路径不再同步写库）
+#   upload_cleanup   → video：回收过期的上传会话与临时分片
+# enabled 缺省为 false：这些任务会在后台写库 / 写缓存，属于「开了才会发生」的副作用。
+jobs:
+  enabled: true
+  rank_refresh: "*/1 * * * *"
+  view_count_flush: "*/10 * * * * *"
+  upload_cleanup: "0 * * * *"
+
+transcode:
+  # FFmpeg / FFprobe 可执行文件；配置为裸名时从 PATH 查找
+  ffmpeg_path: ffmpeg
+  ffprobe_path: ffprobe
+  # HLS 产物根目录，其下按视频 ID 分目录
+  output_dir: "./uploads/hls"
+  # 单个分片时长（秒）
+  segment_sec: 6
+  # 单条任务的最大重试次数，耗尽后标记为转码失败
+  max_retry: 2
+  # 允许同时「转码中」的视频数上限（背压）；超出时上传接口返回 503。<= 0 表示不限制。
+  # 口径 = 库中已在转码的记录数 + 在途上传的预约数（后者记在 Redis，见 pkg/semaphore）。
+  max_pending: 10
+  preset: veryfast
+  # 清晰度档位：高度按源比例自动对齐偶数宽度。
+  # 超过源分辨率的高档位会被裁到源高度（不做放大转码）。
+  renditions:
+    - { name: "480p", height: 480, bitrate: "1400k" }
+    - { name: "720p", height: 720, bitrate: "2800k" }
+    - { name: "1080p", height: 1080, bitrate: "5000k" }
+    - { name: "2160p", height: 2160, bitrate: "16000k" }

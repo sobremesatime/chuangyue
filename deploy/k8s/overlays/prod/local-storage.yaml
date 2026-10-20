@@ -1,0 +1,66 @@
+# 窗月 · 生产 overlay 的「节点本地共享卷」适配（k3s local-path）
+#
+# 背景：base 的 chuangyue-uploads 声明为 ReadWriteMany，因为 gateway / video /
+# transcode-worker / user 四个 **不同 Pod** 要读写同一份上传产物。
+# 而 k3s 自带的 local-path 只支持 ReadWriteOnce —— 按 base 原样 apply，PVC 会一直 Pending。
+#
+# 本文件的做法（单机/小集群的最低成本解）：
+#   1. 把该 PVC 改成 RWO + local-path；
+#   2. 把四个用到它的 Deployment **固定到同一个打了标签的节点**。
+#      RWO 的语义是「同一时刻只能被一个**节点**挂载」，同一节点上的多个 Pod 可以共享，
+#      所以只要四个 Pod 都在这个节点上，功能与 RWX 等价。
+#
+# ⚠️ 代价（必须知情）：
+#   - 这四类 Pod 没有跨节点容灾能力：该节点挂掉，上传产物随之不可用
+#     （与 MySQL 的 local-path 是同一类风险，演示集群接受）。
+#   - 节点必须打标签，否则四个 Pod 会一直 Pending：
+#       kubectl label node <承载上传卷的节点> chuangyue.io/storage=true
+#
+# 如果你有真正的 RWX 存储（云 NAS / NFS / CephFS），**删掉这个 patch** 即可恢复 base 的语义。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chuangyue-uploads
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user
+spec:
+  template:
+    spec:
+      nodeSelector:
+        chuangyue.io/storage: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video
+spec:
+  template:
+    spec:
+      nodeSelector:
+        chuangyue.io/storage: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  template:
+    spec:
+      nodeSelector:
+        chuangyue.io/storage: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcode-worker
+spec:
+  template:
+    spec:
+      nodeSelector:
+        chuangyue.io/storage: "true"

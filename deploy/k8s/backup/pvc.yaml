@@ -1,0 +1,18 @@
+# 窗月 · 备份归档卷
+#
+# 存 mysqldump 归档与上传目录 tar 包，由 CronJob（cronjob.yaml）写入。
+# 备份只由一个 Job **顺序**写、也不被别人读，因此 ReadWriteOnce 足够，无需共享卷。
+#
+# storageClassName 留空 = 用集群默认存储类（k3s 上即 local-path）。
+# local-path 是 WaitForFirstConsumer：卷会建在**调度到备份 Pod 的那个节点**上，
+# 恰好与 CronJob 里 nodeSelector 钉住的存储节点一致（见 cronjob.yaml）。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chuangyue-backups
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

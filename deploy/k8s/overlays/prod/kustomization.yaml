@@ -1,0 +1,105 @@
+# 窗月 · K8s 生产环境 overlay
+#
+# 与 base 的差异：
+#   - 副本数：无状态服务各 2 副本（滚动更新时零停机）；转码 Worker 保持 1（CPU 密集）
+#   - 配置：叠加 prod/config.yaml（env=prod、JSON 日志、连接池调大）
+#   - 资源：统一抬高 requests/limits（转码 Worker 单独保留高 CPU 档）
+#   - 入口：新增 Ingress 指向**接入层 web**（前端静态 + /api 反代），网关仅在集群内可达
+#
+# 用法（在仓库根目录）：
+#   kubectl apply -k deploy/k8s/overlays/prod
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: chuangyue
+
+resources:
+  - ../../base
+  - ingress.yaml
+
+replicas:
+  - name: web
+    count: 2
+  - name: gateway
+    count: 2
+  - name: user
+    count: 2
+  - name: video
+    count: 2
+  - name: interaction
+    count: 2
+  - name: feed
+    count: 2
+  - name: search
+    count: 2
+  - name: transcode-worker
+    count: 1
+
+# 镜像：统一指向 GHCR（由 .github/workflows/release.yml 在推 v1.0.0 标签时打出同名版本标签）。
+# GHCR 包默认私有，集群拉取需要 imagePullSecret（见 deploy/k8s/README.md）。
+images:
+  - name: chuangyue/web
+    newName: ghcr.io/sobremesatime/chuangyue/web
+    newTag: "1.0.0"
+  - name: chuangyue/gateway
+    newName: ghcr.io/sobremesatime/chuangyue/gateway
+    newTag: "1.0.0"
+  - name: chuangyue/user
+    newName: ghcr.io/sobremesatime/chuangyue/user
+    newTag: "1.0.0"
+  - name: chuangyue/video
+    newName: ghcr.io/sobremesatime/chuangyue/video
+    newTag: "1.0.0"
+  - name: chuangyue/interaction
+    newName: ghcr.io/sobremesatime/chuangyue/interaction
+    newTag: "1.0.0"
+  - name: chuangyue/feed
+    newName: ghcr.io/sobremesatime/chuangyue/feed
+    newTag: "1.0.0"
+  - name: chuangyue/search
+    newName: ghcr.io/sobremesatime/chuangyue/search
+    newTag: "1.0.0"
+  - name: chuangyue/transcode-worker
+    newName: ghcr.io/sobremesatime/chuangyue/transcode-worker
+    newTag: "1.0.0"
+
+# 覆盖 base 的 config.yaml（behavior: merge 只替换同名 key）
+configMapGenerator:
+  - name: chuangyue-config
+    behavior: merge
+    files:
+      - config.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+
+patches:
+  # 上传共享卷改为「节点本地 + 四类 Pod 同节点」：k3s 只有 local-path（RWO）。
+  # 有真正的 RWX 存储时删掉这一行；细节与代价见 local-storage.yaml 文件头。
+  - path: local-storage.yaml
+  # 无状态服务统一抬高资源档
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+  # 转码 Worker 是 CPU 密集型，单独保留高 CPU 档（避免被上面的通用 patch 压低）
+  - target:
+      kind: Deployment
+      name: transcode-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "1"
+            memory: 512Mi
+          limits:
+            cpu: "4"
+            memory: 2Gi

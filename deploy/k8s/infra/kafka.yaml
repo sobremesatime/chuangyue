@@ -1,0 +1,128 @@
+# 窗月 · Kafka 3.9（单实例，KRaft 模式）
+#
+# 用途：转码任务投递（chuangyue.transcode.task）与互动计数回写（chuangyue.video.stat）。
+# 没有 Kafka 时：上传接口仍能落盘，但转码任务发不出去 → 视频永远停在「转码中」。
+#
+# 为什么用 KRaft 而不是 ZooKeeper：3.9 已内置 KRaft，省掉一个中间件；
+# 单节点把 controller 与 broker 合到一个进程，用 127.0.0.1 指自己，
+# 不依赖任何 DNS（Pod 重启换 IP 也不影响仲裁地址）。
+#
+# 与 compose 的差异：compose 有 EXTERNAL 监听器（宿主机 go run 接入），
+# 集群里不存在「宿主机客户端」这一侧，因此只保留 INTERNAL。
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: kafka
+  ports:
+    - name: broker
+      port: 9092
+      targetPort: broker
+    - name: controller
+      port: 9093
+      targetPort: controller
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: mq
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.0
+          ports:
+            - name: broker
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
+          env:
+            - name: KAFKA_NODE_ID
+              value: "0"
+            - name: KAFKA_PROCESS_ROLES
+              value: "controller,broker"
+            # 单节点仲裁：指向自身回环，避免 Pod DNS 尚未就绪时无法完成 format。
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "0@127.0.0.1:9093"
+            - name: KAFKA_LISTENERS
+              value: "INTERNAL://:9092,CONTROLLER://:9093"
+            # 客户端拿到的就是 kafka:9092 —— 与 config.yaml 的 kafka.brokers 一致。
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "INTERNAL://kafka:9092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "INTERNAL"
+            # 单副本下内部主题的副本因子必须为 1，否则 Kafka 起不来。
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          # 没有对外端口探针可用，用 broker 的 API 版本探测判断「能应答客户端」。
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 300m
+              memory: 768Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi

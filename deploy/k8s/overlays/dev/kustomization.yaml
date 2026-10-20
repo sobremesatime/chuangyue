@@ -1,0 +1,48 @@
+# 窗月 · K8s 开发环境 overlay
+#
+# 与 base 的差异：镜像 tag 指向 `dev`；单副本；沿用 base 的配置（env=dev、日志 console）。
+#
+# 用法（在仓库根目录）：
+#   kubectl apply -k deploy/k8s/overlays/dev
+#
+# 本 overlay 不带 Ingress（集群里未必有 Ingress Controller）。
+# 想访问页面/接口时用本地转发即可（web 是接入层，前端静态 + /api 都从它进）：
+#   kubectl -n chuangyue port-forward svc/web 8080:80
+#   # 然后浏览器打开 http://127.0.0.1:8080
+#
+# 镜像：base 里写的是 `chuangyue/<service>`，这里统一改为 GHCR 地址
+# （由 .github/workflows/release.yml 在 main 分支推送时打出 `dev` 标签）。
+# GHCR 包默认私有，集群拉取需要在各 Deployment 上配 imagePullSecret 才能免密拉取（见 deploy/k8s/README.md）。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: chuangyue
+
+resources:
+  - ../../base
+
+images:
+  - name: chuangyue/web
+    newName: ghcr.io/sobremesatime/chuangyue/web
+    newTag: dev
+  - name: chuangyue/gateway
+    newName: ghcr.io/sobremesatime/chuangyue/gateway
+    newTag: dev
+  - name: chuangyue/user
+    newName: ghcr.io/sobremesatime/chuangyue/user
+    newTag: dev
+  - name: chuangyue/video
+    newName: ghcr.io/sobremesatime/chuangyue/video
+    newTag: dev
+  - name: chuangyue/interaction
+    newName: ghcr.io/sobremesatime/chuangyue/interaction
+    newTag: dev
+  - name: chuangyue/feed
+    newName: ghcr.io/sobremesatime/chuangyue/feed
+    newTag: dev
+  - name: chuangyue/search
+    newName: ghcr.io/sobremesatime/chuangyue/search
+    newTag: dev
+  - name: chuangyue/transcode-worker
+    newName: ghcr.io/sobremesatime/chuangyue/transcode-worker
+    newTag: dev

@@ -1,0 +1,26 @@
+# 窗月 · 集群内定时备份（可选目录）
+#
+# 独立于 base / infra 的可选套件：用云托管数据库、或备份由云商负责时，整目录不用 apply。
+# 内容：备份归档卷（pvc.yaml）+ 备份脚本（configMapGenerator 生成 chuangyue-backup-script）+
+# 定时任务（cronjob.yaml）。
+#
+# 用法（在仓库根目录，需先有应用与中间件）：
+#   kubectl apply -k deploy/k8s/backup
+#   kubectl -n chuangyue get pods -w          # 等 PVC Bound；CronJob 到点才会拉起 Pod
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: chuangyue
+
+resources:
+  - pvc.yaml
+  - cronjob.yaml
+
+# 用文件生成备份脚本 ConfigMap（挂进 CronJob 的 /scripts/backup.sh）。
+# 关掉名字哈希后缀，cronjob.yaml 里按固定名 chuangyue-backup-script 引用才不必做 nameReference 替换。
+configMapGenerator:
+  - name: chuangyue-backup-script
+    files:
+      - backup.sh
+generatorOptions:
+  disableNameSuffixHash: true

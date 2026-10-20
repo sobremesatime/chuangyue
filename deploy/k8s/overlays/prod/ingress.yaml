@@ -1,0 +1,42 @@
+# 窗月 · 生产入口（Ingress）
+#
+# 全站只有一个对外入口：**接入层 web（Nginx）**。它托管前端静态资源，
+# 并把 /api 与 /uploads 反代给集群内的网关；网关自身不再对外暴露。
+# 因此这里指向的是 web，而不是 gateway。
+#
+# 依赖集群已装 Ingress Controller（示例用 nginx；其他实现请替换 annotations 与 ingressClassName）。
+# 注意：若集群是 k3s 且沿用自带的 Traefik，需把 ingressClassName 与 annotations 换成 Traefik 的写法，
+# 不要与这里混用（见 deploy/k8s/README.md「入口链路」）。
+#
+# proxy-body-size：上传接口允许最大 2048MB，Nginx Ingress 默认 1MB 会直接 413，必须放开；
+# read/send timeout 放宽以适配大文件与 HLS 分片的长连接。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: chuangyue
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2048m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chuangyue.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+  # 启用 HTTPS 时取消注释并配置证书（可用 cert-manager 自动签发）；
+  # 注意 Refresh Token 的 Cookie 是 Secure，生产必须走 HTTPS 才带得上。
+  # tls:
+  #   - hosts:
+  #       - chuangyue.example.com
+  #     secretName: chuangyue-tls

@@ -1,0 +1,71 @@
+# 窗月 · 转码 Worker（消费 Kafka 任务，产出 HLS）
+#
+# 无对外端口，因此不建 Service、也不做端口探针；生命周期由 restartPolicy 兜底。
+# 启动时会 EnsureTopic，Kafka 未就绪会直接退出 → 由 Deployment 的退避重启等它恢复
+# （与 compose 里的行为一致）。
+# 产物与源文件都落在共享卷 chuangyue-uploads，与 video / gateway 共用同一份数据。
+#
+# replicas 建议保持 1：多副本会分摊 Kafka 分区（同 consumer group），但会让单节点的
+# CPU 长期跑满；需要扩容时按 CPU 余量再调。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcode-worker
+  labels:
+    app.kubernetes.io/name: transcode-worker
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: transcode-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: transcode-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transcode-worker
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 60
+      # 拉取私有 GHCR 镜像的凭据，由部署者预先创建的 Secret 提供（见 deploy/k8s/README）。
+      # 该 Secret 不存在也不会阻止 Pod 启动——只是私有仓库会 ImagePullBackOff；把 8 个包设为 public 时无需它。
+      imagePullSecrets:
+        - name: ghcr-auth
+      containers:
+        - name: transcode-worker
+          image: chuangyue/transcode-worker
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/app/config.yaml", "-metrics-addr", ":9206"]
+          ports:
+            # 无对外服务端口，只暴露 Prometheus 抓取端口
+            - name: metrics
+              containerPort: 9206
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          envFrom:
+            - secretRef:
+                name: chuangyue-secrets
+          resources:
+            # 转码是 CPU 密集型：requests 给足以保证调度到有余量的节点，limits 可按节点核数调整。
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            # 读视频服务落盘的源文件、写 HLS 产物
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: config
+          configMap:
+            name: chuangyue-config
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: chuangyue-uploads

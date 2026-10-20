@@ -1,0 +1,97 @@
+# 窗月 · 视频服务（视频读写、上传 / 分片上传、管理端 CRUD、转码状态读写）
+#
+# 依赖：MySQL（chuangyue 库）、Etcd、Kafka（投递转码任务 + 消费互动计数回写）、共享上传卷。
+# Kafka 生产者是惰性连接，Kafka 暂不可用不影响启动；计数消费者会失败退避重连（见 cmd/video）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video
+  labels:
+    app.kubernetes.io/name: video
+    app.kubernetes.io/part-of: chuangyue
+    app.kubernetes.io/component: video
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: video
+        app.kubernetes.io/part-of: chuangyue
+    spec:
+      terminationGracePeriodSeconds: 30
+      # 拉取私有 GHCR 镜像的凭据，由部署者预先创建的 Secret 提供（见 deploy/k8s/README）。
+      # 该 Secret 不存在也不会阻止 Pod 启动——只是私有仓库会 ImagePullBackOff；把 8 个包设为 public 时无需它。
+      imagePullSecrets:
+        - name: ghcr-auth
+      containers:
+        - name: video
+          image: chuangyue/video
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/app/config.yaml", "-addr", ":9102", "-advertise", "$(POD_IP):9102", "-metrics-addr", ":9202"]
+          ports:
+            - name: grpc
+              containerPort: 9102
+            # Prometheus 抓取端口（配合 PodMonitor / 注解抓取）
+            - name: metrics
+              containerPort: 9202
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          envFrom:
+            - secretRef:
+                name: chuangyue-secrets
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            # 写源文件与封面，供 Worker 读取、网关静态托管
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: config
+          configMap:
+            name: chuangyue-config
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: chuangyue-uploads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video
+  labels:
+    app.kubernetes.io/name: video
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: video
+  ports:
+    - name: grpc
+      port: 9102
+      targetPort: grpc

@@ -1,0 +1,159 @@
+# 窗月 · 应用配置（K8s ConfigMap 的输入文件）
+#
+# 与 deploy/compose/config.yaml 的差异只有「主机名」：集群内按 Service 名互通，
+# 因此 mysql / redis / etcd / kafka / minio 均为「同命名空间内的 Service 名」。
+#
+# 敏感项（密码、JWT 密钥）这里留空，由 Secret `chuangyue-secrets` 以同名环境变量注入
+# （环境变量优先级高于配置文件，见 pkg/config 的 BindEnv），配置文件里保留空键是为了
+# 让 viper 的键存在、从而能被环境变量覆盖。
+#
+# 前置依赖（不在本目录编排，视为集群既有能力）：
+#   - MySQL（chuangyue 库 + chuangyue_interaction 库 + chy_interaction 账号，见 migrations/）
+#   - Redis、Etcd、Kafka、MinIO（对象存储驱动时才需要）、Elasticsearch（检索时才需要）
+
+app:
+  name: chuangyue
+  env: dev
+  addr: ":8080"         # 仅网关使用；其余服务的监听地址由 -addr 参数指定
+  mode: debug
+  # 集群里网关前面是接入层 web（Nginx），必须信任它的来源地址，否则按 IP 的限流
+  # 会把所有请求算成同一个来源。web 的 Pod IP 是动态的，因此填集群的 Pod CIDR
+  # （下面按 k3s 默认值 10.42.0.0/16 填写；其他发行版请改成自己集群的 Pod 网段）。
+  trusted_proxies:
+    - 10.42.0.0/16
+
+log:
+  level: info
+  format: console
+  output: stdout
+
+mysql:
+  host: mysql
+  port: 3306
+  username: root
+  password: ""          # 由 CHUANGYUE_MYSQL_PASSWORD 注入
+  database: chuangyue
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  log_level: warn
+
+# 互动域独立库（物理拆库）：同实例、独立库与独立账号。
+interaction_mysql:
+  host: mysql
+  port: 3306
+  username: chy_interaction
+  password: ""          # 由 CHUANGYUE_INTERACTION_MYSQL_PASSWORD 注入
+  database: chuangyue_interaction
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  log_level: warn
+
+redis:
+  host: redis
+  port: 6379
+  password: ""          # 由 CHUANGYUE_REDIS_PASSWORD 注入
+  db: 0
+  pool_size: 100
+
+jwt:
+  access_secret: ""     # 由 CHUANGYUE_JWT_ACCESS_SECRET 注入
+  refresh_secret: ""    # 由 CHUANGYUE_JWT_REFRESH_SECRET 注入
+  access_expire: 15m
+  refresh_expire: 168h
+  issuer: chuangyue
+
+mail:
+  # base 是 dev 档（app.env=dev），因此用 log 驱动：验证码打进 user 服务日志。
+  # prod overlay 会整段覆盖为 smtp——生产若仍是 log，user 服务会启动失败。
+  # smtp 的字段说明见 configs/config.example.yaml 与 pkg/mailer。
+  driver: log
+  from: "窗月 <no-reply@chuangyue.dev>"
+
+verify:
+  code_ttl: 5m
+  code_cooldown: 60s
+  code_max_try: 5
+  email_hourly_limit: 5
+  ip_hourly_limit: 20
+
+upload:
+  # local：产物落在共享卷 chuangyue-uploads（需 RWX 存储类）；
+  # 生产可改为 minio，仅需给 MinIO 配好凭据。
+  driver: local
+  local_dir: "./uploads"
+  max_size_mb: 2048
+  chunk_size_mb: 8
+  allowed_ext: [".mp4", ".mov", ".mkv", ".webm"]
+  minio:
+    endpoint: minio:9000
+    access_key: ""      # 由 CHUANGYUE_UPLOAD_MINIO_ACCESS_KEY 注入
+    secret_key: ""      # 由 CHUANGYUE_UPLOAD_MINIO_SECRET_KEY 注入
+    bucket: chuangyue
+    use_ssl: false
+    region: us-east-1
+    public_url: ""
+
+kafka:
+  brokers: ["kafka:9092"]
+  topic: chuangyue.transcode.task
+  group: chuangyue-transcode-worker
+  stat_topic: chuangyue.video.stat
+  stat_group: chuangyue-video-stat-sync
+  # 视频删除事件：视频域生产、互动域消费（清理该视频的评论 / 弹幕 / 点赞 / 收藏 / 历史等关联数据）。
+  delete_topic: chuangyue.video.deleted
+  delete_group: chuangyue-interaction-purge
+  # 视频索引事件：视频域生产、搜索域消费（同步 ES 索引）。
+  index_topic: chuangyue.video.index
+  index_group: chuangyue-search-indexer
+
+# 检索：集群内按 Service 名访问 ES（deploy/k8s/infra/elasticsearch.yaml）。
+# 若使用托管 ES，改地址即可；不可用时检索自动退回视频服务的库内 LIKE。
+search:
+  es:
+    enabled: true
+    addresses: ["http://elasticsearch:9200"]
+    index: chuangyue_videos
+    username: ""
+    password: ""
+    timeout: 3s
+
+etcd:
+  endpoints: ["etcd:2379"]
+
+ratelimit:
+  enabled: true
+  ip_per_second: 20
+  ip_burst: 40
+  user_per_second: 10
+  user_burst: 20
+
+circuitbreaker:
+  enabled: true
+  failure_threshold: 5
+  open_timeout: 10s
+  half_open_max: 1
+
+# 周期任务（robfig/cron）：feed 预热首页热度榜、video 落库播放量与清理过期上传。
+jobs:
+  enabled: true
+  rank_refresh: "*/1 * * * *"
+  view_count_flush: "*/10 * * * * *"
+  upload_cleanup: "0 * * * *"
+
+transcode:
+  ffmpeg_path: ffmpeg
+  ffprobe_path: ffprobe
+  output_dir: "./uploads/hls"
+  segment_sec: 6
+  max_retry: 2
+  max_pending: 10
+  preset: veryfast
+  renditions:
+    - { name: "480p", height: 480, bitrate: "1400k" }
+    - { name: "720p", height: 720, bitrate: "2800k" }
+    - { name: "1080p", height: 1080, bitrate: "5000k" }
+    - { name: "2160p", height: 2160, bitrate: "16000k" }

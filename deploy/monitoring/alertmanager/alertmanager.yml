@@ -1,0 +1,85 @@
+# 窗月 · Alertmanager 配置（本地 / Compose）
+#
+# 分工：Prometheus 负责**判定**（alerts.yml 里的 expr 什么时候成立），Alertmanager 负责**处置**——
+# 去重、分组、抑制、路由、通知。两者是两件事：判定关心「是不是异常」，处置关心「该不该吵人、吵给谁、多久吵一次」。
+#
+# 本地默认不外发通知（receiver `local` 不带任何渠道），告警只在 UI 里看：
+#   http://127.0.0.1:9093
+# 生产接入真实渠道的做法见文末注释——本文件刻意不写死任何口令 / Webhook 地址。
+
+global:
+  # 多久没再收到某条告警的更新，就认为它已恢复。Prometheus 每 evaluation_interval（15s）
+  # 推一次未恢复的告警，正常情况下远快于该值；它的意义是兜住「Prometheus 突然没了」——
+  # 若不做超时兜底，那些告警会永远停在 Firing 状态，运维会以为故障一直没修好。
+  resolve_timeout: 5m
+
+# 路由树：先决定「告警进哪个组」，再由组决定「通知给谁、隔多久再提一次」。
+route:
+  receiver: local
+  # 分组的依据。为什么按这几项：
+  #   alertname —— 同一种问题合并成一条通知，而不是每个实例各发一条；
+  #   service / target —— 同一问题的不同来源分开，避免「video 挂了」和「feed 挂了」被糊成一条；
+  #   path —— 网关按路由下钻的告警，只有带上 path 才知道该看哪个接口。
+  # 反过来说，**不能**用 instance 分组：滚动更新 / 重启会让 instance 变化，同一故障会因此被拆成多条。
+  group_by: ["alertname", "service", "target", "path"]
+  # 首次通知前的等待：给「同一批一起冒出来的告警」一个凑齐的时间窗，
+  # 避免一次故障先发一条、10 秒后又补一条。10s 是通知及时性与「少吵人」的折中。
+  group_wait: 10s
+  # 同一组内容有变化时的再次通知间隔。
+  group_interval: 5m
+  # 同一组内容**没有**变化时的重复通知间隔。设成小时级是刻意的：
+  # 故障未修好时反复提醒只会让人麻木，宁可靠「未恢复」状态在 UI 里持续可见。
+  repeat_interval: 4h
+
+  routes:
+    # critical 提得更勤：这类问题通常已经在影响用户，值得更短的提醒间隔。
+    - receiver: local
+      matchers:
+        - severity = critical
+      repeat_interval: 1h
+
+# 抑制规则：当**根因**告警已存在时，压掉由它派生的**下游**告警。
+#
+# 这里的根因是 TargetDown（目标掉线），派生项是依赖类告警。举例：停掉 video 服务后，
+# 调用它的网关 / feed 会立刻开始报 CircuitBreakerNotClosed 与 DownstreamCallFailing——
+# 这些都是「video 没了」的同一件事的不同侧面。不抑制的话，一条根因会带来一串噪音，
+# 真正的第一现场（TargetDown）反而被淹掉。
+#
+# 能匹配的前提是**两侧带同名标签**：TargetDown 在规则里把 job 映射成了 service 标签；
+# 依赖类告警里 CircuitBreakerNotClosed 天然带 service，DownstreamCallFailing / DownstreamCallSlow
+# 的指标标签本是 target，规则里补了一个等值的 service 标签——都是为了对齐到这一个维度（见 alerts.yml）。
+#
+# 边界：抑制只覆盖「同一服务的依赖类告警」。入口类告警（按 path / dimension 聚合）不在此列——
+# 它们与具体某个服务没有同名标签可对齐，宁可在界面上多看一条，也不做跨维度的错杀。
+inhibit_rules:
+  - source_matchers:
+      - alertname = TargetDown
+    target_matchers:
+      - severity =~ "warning|critical"
+    # 只有「同一个服务」才抑制。equal 为空（或参数不齐）会变成「只要有任何目标掉线，
+    # 就压掉所有告警」——那会把真正无关的故障一起藏起来，是抑制规则最常见的写法事故。
+    equal: ["service"]
+
+# 接收器。Alertmanager 允许接收器不带任何渠道——此时告警不会外发，但**照常完成分组、抑制、
+# 静默与状态流转**，在 UI 里能完整看到。本地开发用这一种最省事：不需要额外跑一个 Webhook 服务，
+# 也不会因为没有收件方而反复重试报错。
+receivers:
+  - name: local
+
+# 生产接入真实渠道的写法（按需复制到上面的 receivers 里，并把 route.receiver 指过去）：
+#
+#   - name: prod
+#     webhook_configs:
+#       # 企业内部告警网关 / 机器人中转（飞书 / 钉钉 / Slack 都有 Webhook 形态）
+#       - url: "https://<internal-alert-gateway>/alerts"
+#         send_resolved: true     # 恢复时也通知，否则运维只能靠刷新 UI 判断是否恢复
+#     email_configs:
+#       - to: "oncall@example.com"
+#         from: "alertmanager@example.com"
+#         smarthost: "smtp.example.com:587"
+#         auth_username: "${SMTP_USER}"
+#         auth_password: "${SMTP_PASSWORD}"
+#
+# 两条纪律（与本仓库其余配置一致）：
+#   1. **口令不落盘**：收件凭证走环境变量或集群 Secret，不要写进本文件；
+#   2. **URL 不写死内网地址**：换环境时只改 route，不改规则。

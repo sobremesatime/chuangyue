@@ -1,0 +1,159 @@
+# 窗月 · 容器内运行配置（由 deploy/compose/docker-compose.yml 挂载进各服务）
+#
+# 与 configs/config.example.yaml 的唯一区别是「主机名」：容器之间按 compose 服务名互通，
+# 不能用 127.0.0.1（那是容器自身）。其余取值与本地开发保持一致，保证对外行为不变。
+#
+# 时区提醒：MySQL 的 DSN 用 loc=Local，created_at 的时区取决于容器时区；因此 compose 里
+# 所有服务都设了 TZ=Asia/Shanghai，镜像内也已装 tzdata，避免与开发环境出现时间漂移。
+
+app:
+  name: chuangyue
+  env: dev
+  addr: ":8080"         # 仅网关使用；其余服务的监听地址由 -addr 参数指定
+  mode: debug
+  # compose 里网关直接映射到宿主机 8080（前面没有 Nginx），因此不信任任何代理。
+  trusted_proxies: []
+
+log:
+  level: info           # 容器里用 info，避免调试日志刷屏
+  format: console
+  output: stdout
+
+mysql:
+  host: mysql
+  port: 3306
+  username: root
+  password: "root123456"
+  database: chuangyue
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  log_level: warn
+
+# 互动域独立库：容器里用独立账号连 chuangyue_interaction，不再触达视频库。
+interaction_mysql:
+  host: mysql
+  port: 3306
+  username: chy_interaction
+  password: "chy_interaction_pwd"
+  database: chuangyue_interaction
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  log_level: warn
+
+redis:
+  host: redis
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 100
+
+jwt:
+  access_secret: "dev-access-secret-please-change"
+  refresh_secret: "dev-refresh-secret-please-change"
+  access_expire: 15m
+  refresh_expire: 168h
+  issuer: chuangyue
+
+mail:
+  # 容器环境同样是 dev 档，沿用 log 驱动：验证码打进 user 服务日志，从日志取码。
+  # 想在这里实测真发信，把 driver 改成 smtp 并补上 host/port/username/tls，
+  # 口令用环境变量 CHUANGYUE_MAIL_PASSWORD 注入（见 .env.example）。
+  driver: log
+  from: "窗月 <no-reply@chuangyue.dev>"
+
+verify:
+  code_ttl: 5m
+  code_cooldown: 60s
+  code_max_try: 5
+  email_hourly_limit: 5
+  ip_hourly_limit: 20
+
+upload:
+  # 本地磁盘驱动：目录是 /app/uploads，由 compose 的 uploads_data 卷在
+  # video（写入）/ transcode-worker（写 HLS）/ gateway（静态托管）之间共享。
+  driver: local
+  local_dir: "./uploads"
+  max_size_mb: 2048
+  chunk_size_mb: 8
+  allowed_ext: [".mp4", ".mov", ".mkv", ".webm"]
+  minio:
+    endpoint: minio:9000
+    access_key: minioadmin
+    secret_key: minioadmin
+    bucket: chuangyue
+    use_ssl: false
+    region: us-east-1
+    public_url: ""
+
+kafka:
+  # compose 网络内用 INTERNAL 监听器（kafka:9094）；宿主机 go run 才用 127.0.0.1:9092。
+  # 两个监听器见 docker-compose.yml 的 kafka 服务注释。
+  brokers: ["kafka:9094"]
+  topic: chuangyue.transcode.task
+  group: chuangyue-transcode-worker
+  stat_topic: chuangyue.video.stat
+  stat_group: chuangyue-video-stat-sync
+  # 视频删除事件：视频域生产、互动域消费（清理该视频的评论 / 弹幕 / 点赞 / 收藏 / 历史等关联数据）。
+  delete_topic: chuangyue.video.deleted
+  delete_group: chuangyue-interaction-purge
+  # 视频索引事件：视频域生产、搜索域消费（同步 ES 索引）。
+  index_topic: chuangyue.video.index
+  index_group: chuangyue-search-indexer
+
+# 检索：ES 在 full profile 下（与 Kafka 一起），容器内按服务名访问。
+# 未启动 ES 时检索会自动退回视频服务的库内 LIKE，不影响搜索接口可用性。
+search:
+  es:
+    enabled: true
+    addresses: ["http://elasticsearch:9200"]
+    index: chuangyue_videos
+    username: ""
+    password: ""
+    timeout: 3s
+
+etcd:
+  endpoints: ["etcd:2379"]
+
+ratelimit:
+  enabled: true
+  ip_per_second: 20
+  ip_burst: 40
+  user_per_second: 10
+  user_burst: 20
+
+circuitbreaker:
+  enabled: true
+  failure_threshold: 5
+  open_timeout: 10s
+  half_open_max: 1
+
+# 链路追踪：endpoint 指向 compose 网络内的 jaeger 服务（monitoring profile）。
+# 留空即禁用追踪（各服务不产生 span，日志链路 ID 照旧）。
+tracing:
+  endpoint: jaeger:4317
+  sample_ratio: 1.0
+
+# 周期任务（robfig/cron）：feed 预热首页热度榜、video 落库播放量与清理过期上传。
+jobs:
+  enabled: true
+  rank_refresh: "*/1 * * * *"
+  view_count_flush: "*/10 * * * * *"
+  upload_cleanup: "0 * * * *"
+
+transcode:
+  ffmpeg_path: ffmpeg
+  ffprobe_path: ffprobe
+  output_dir: "./uploads/hls"
+  segment_sec: 6
+  max_retry: 2
+  max_pending: 10
+  preset: veryfast
+  renditions:
+    - { name: "480p", height: 480, bitrate: "1400k" }
+    - { name: "720p", height: 720, bitrate: "2800k" }
+    - { name: "1080p", height: 1080, bitrate: "5000k" }
+    - { name: "2160p", height: 2160, bitrate: "16000k" }

@@ -1,0 +1,429 @@
+syntax = "proto3";
+
+package interaction.v1;
+
+option go_package = "github.com/sobremesatime/chuangyue/api/gen/interaction/v1;interactionv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ===== 视频互动计数（供 feed / 视频服务消费，保持不动）=====
+
+// VideoStats 是单个视频的互动计数。
+//
+// 拆分后计数归互动服务持有，视频列表/详情需要时批量读取。
+message VideoStats {
+  int64 video_id       = 1;
+  int64 like_count     = 2;
+  int64 favorite_count = 3;
+  int64 comment_count  = 4;
+}
+
+message GetVideoStatsRequest {
+  repeated int64 video_ids = 1;
+}
+
+message GetVideoStatsResponse {
+  repeated VideoStats stats = 1;
+}
+
+message GetUserSignalsRequest {
+  int64 user_id = 1;
+  int32 limit   = 2;
+}
+
+message GetUserSignalsResponse {
+  repeated int64 watched_video_ids = 1; // 最近看过的，按最近观看时间倒序
+  repeated int64 engaged_video_ids = 2; // 最近点赞 + 收藏过的，去重、按时间倒序
+}
+
+// InteractionService 向其它服务提供互动计数。
+service InteractionService {
+  // GetVideoStats 批量取视频的点赞、收藏与评论计数。
+  rpc GetVideoStats(GetVideoStatsRequest) returns (GetVideoStatsResponse);
+  // GetUserSignals 返回首页推荐所需的用户行为信号。
+  rpc GetUserSignals(GetUserSignalsRequest) returns (GetUserSignalsResponse);
+}
+
+// ===== 通用消息 =====
+
+// InteractionState 是当前用户对某个视频的互动状态。
+message InteractionState {
+  bool  liked       = 1;
+  bool  favorited   = 2;
+  bool  watch_later = 3;
+  int32 progress    = 4;
+}
+
+// LikeResult 是点赞 / 取消点赞的结果，顺带带回最新计数。
+message LikeResult {
+  bool  liked      = 1;
+  int64 like_count = 2;
+}
+
+// FavoriteResult 是收藏 / 取消收藏的结果，顺带带回最新计数。
+message FavoriteResult {
+  bool  favorited      = 1;
+  int64 favorite_count = 2;
+}
+
+// WatchLaterResult 是加入 / 移出稍后再看的结果（无计数列，只回状态）。
+message WatchLaterResult {
+  bool watch_later = 1;
+}
+
+// VideoCard 是互动列表（点赞 / 收藏 / 稍后再看 / 历史）里展示的视频信息，
+// 字段对齐视频域的对外 DTO；id 由网关按字符串序列化，category_id 为数字。
+message VideoCard {
+  int64  id             = 1;
+  string title          = 2;
+  string description    = 3;
+  string cover_url      = 4;
+  string play_url       = 5;
+  int32  duration       = 6;
+  int64  category_id    = 7;
+  int64  view_count     = 8;
+  int64  like_count     = 9;
+  int64  favorite_count = 10;
+  int32  status         = 11;
+  string error_msg      = 12;
+  google.protobuf.Timestamp created_at = 13;
+}
+
+// ===== 评论 =====
+
+// CommentInfo 是对外暴露的评论信息，带作者与被回复者展示信息。
+message CommentInfo {
+  int64  id                   = 1;
+  int64  video_id             = 2;
+  int64  user_id              = 3;
+  string username             = 4;
+  string nickname             = 5;
+  string avatar               = 6;
+  string content              = 7;
+  int64  like_count           = 8;
+  bool   liked                = 9;
+  google.protobuf.Timestamp created_at = 10;
+  int64  parent_id            = 11;
+  int64  reply_to_user_id     = 12;
+  string reply_to_nickname    = 13;
+  int64  reply_count          = 14;
+  // Replies 内嵌一级评论最早的若干条回复（一级评论才有；回复项自身为空数组）
+  repeated CommentInfo replies = 15;
+}
+
+// AdminCommentInfo 是管理端内容治理下的评论条目。
+message AdminCommentInfo {
+  int64  id                = 1;
+  int64  video_id          = 2;
+  string video_title       = 3;
+  int64  user_id           = 4;
+  string nickname          = 5;
+  string avatar            = 6;
+  string content           = 7;
+  int64  parent_id         = 8;
+  string reply_to_nickname = 9;
+  int64  reply_count       = 10;
+  int64  like_count        = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+message ListCommentsRequest {
+  reserved 2; // 原 viewer_id：调用者身份改由 gRPC metadata 透传（未登录即无身份）
+  int64 video_id  = 1;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message ListCommentsResponse {
+  repeated CommentInfo comments = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message ListRepliesRequest {
+  reserved 2; // 原 viewer_id：同上，身份走 metadata
+  int64 parent_id = 1;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message ListRepliesResponse {
+  repeated CommentInfo comments = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message CreateCommentRequest {
+  reserved 1; // 原 user_id：作者身份改由 gRPC metadata 透传
+  int64  video_id  = 2;
+  int64  parent_id = 3; // 0 表示发表一级评论
+  string content   = 4;
+}
+
+message CreateCommentResponse {
+  CommentInfo comment = 1;
+}
+
+message DeleteCommentRequest {
+  reserved 2, 3; // 原 user_id / is_admin：操作者身份与角色改由 metadata 透传
+  int64 comment_id = 1;
+}
+
+message DeleteCommentResponse {}
+
+message LikeCommentRequest {
+  reserved 1; // 原 user_id：点赞者身份改由 metadata 透传
+  int64 comment_id = 2;
+}
+
+message UnlikeCommentRequest {
+  reserved 1; // 原 user_id：同上
+  int64 comment_id = 2;
+}
+
+message AdminListCommentsRequest {
+  int32  page      = 1;
+  int32  page_size = 2;
+  string keyword   = 3;
+}
+
+message AdminListCommentsResponse {
+  repeated AdminCommentInfo comments = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message AdminDeleteCommentRequest {
+  int64 comment_id = 1;
+}
+
+message AdminDeleteCommentResponse {
+  int64 id = 1;
+}
+
+// CommentService 提供视频评论的读写与内容治理。
+service CommentService {
+  rpc ListComments(ListCommentsRequest) returns (ListCommentsResponse);
+  rpc ListReplies(ListRepliesRequest) returns (ListRepliesResponse);
+  rpc CreateComment(CreateCommentRequest) returns (CreateCommentResponse);
+  rpc DeleteComment(DeleteCommentRequest) returns (DeleteCommentResponse);
+  rpc LikeComment(LikeCommentRequest) returns (LikeResult);
+  rpc UnlikeComment(UnlikeCommentRequest) returns (LikeResult);
+  rpc AdminListComments(AdminListCommentsRequest) returns (AdminListCommentsResponse);
+  rpc AdminDeleteComment(AdminDeleteCommentRequest) returns (AdminDeleteCommentResponse);
+}
+
+// ===== 弹幕 =====
+
+// DanmakuInfo 是对外暴露的弹幕信息，带发送者展示信息。
+message DanmakuInfo {
+  int64  id        = 1;
+  int64  video_id  = 2;
+  int64  user_id   = 3;
+  string username  = 4;
+  string nickname  = 5;
+  string avatar    = 6;
+  string content   = 7;
+  int32  time_ms   = 8;
+  string color     = 9;
+  int32  mode      = 10;
+  google.protobuf.Timestamp created_at = 11;
+}
+
+// AdminDanmakuInfo 是管理端内容治理下的弹幕条目。
+message AdminDanmakuInfo {
+  int64  id          = 1;
+  int64  video_id    = 2;
+  string video_title = 3;
+  int64  user_id     = 4;
+  string nickname    = 5;
+  string content     = 6;
+  int32  time_ms     = 7;
+  int32  mode        = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message ListDanmakuRequest {
+  int64 video_id = 1;
+}
+
+message ListDanmakuResponse {
+  repeated DanmakuInfo danmaku = 1;
+}
+
+message CreateDanmakuRequest {
+  reserved 1; // 原 user_id：发送者身份改由 metadata 透传
+  int64  video_id = 2;
+  string content  = 3;
+  int32  time_ms  = 4;
+  string color    = 5;
+  int32  mode     = 6;
+}
+
+message CreateDanmakuResponse {
+  DanmakuInfo danmaku = 1;
+}
+
+message DeleteDanmakuRequest {
+  reserved 2, 3; // 原 user_id / is_admin：操作者身份与角色改由 metadata 透传
+  int64 danmaku_id = 1;
+}
+
+message DeleteDanmakuResponse {}
+
+message AdminListDanmakuRequest {
+  int32  page      = 1;
+  int32  page_size = 2;
+  string keyword   = 3;
+}
+
+message AdminListDanmakuResponse {
+  repeated AdminDanmakuInfo danmaku = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message AdminDeleteDanmakuRequest {
+  int64 danmaku_id = 1;
+}
+
+message AdminDeleteDanmakuResponse {
+  int64 id = 1;
+}
+
+// DanmakuService 提供视频弹幕的读写与内容治理。
+service DanmakuService {
+  rpc ListDanmaku(ListDanmakuRequest) returns (ListDanmakuResponse);
+  rpc CreateDanmaku(CreateDanmakuRequest) returns (CreateDanmakuResponse);
+  rpc DeleteDanmaku(DeleteDanmakuRequest) returns (DeleteDanmakuResponse);
+  rpc AdminListDanmaku(AdminListDanmakuRequest) returns (AdminListDanmakuResponse);
+  rpc AdminDeleteDanmaku(AdminDeleteDanmakuRequest) returns (AdminDeleteDanmakuResponse);
+}
+
+// ===== 用户互动（点赞 / 收藏 / 稍后再看 / 观看历史 / 「我」列表）=====
+
+message LikeVideoRequest {
+  reserved 1; // 原 user_id：操作者身份改由 metadata 透传
+  int64 video_id = 2;
+}
+
+message UnlikeVideoRequest {
+  reserved 1;
+  int64 video_id = 2;
+}
+
+message FavoriteVideoRequest {
+  reserved 1;
+  int64 video_id = 2;
+}
+
+message UnfavoriteVideoRequest {
+  reserved 1;
+  int64 video_id = 2;
+}
+
+message AddWatchLaterRequest {
+  reserved 1;
+  int64 video_id = 2;
+}
+
+message RemoveWatchLaterRequest {
+  reserved 1;
+  int64 video_id = 2;
+}
+
+message GetInteractionStateRequest {
+  reserved 1;
+  int64 video_id = 2;
+}
+
+message ReportHistoryRequest {
+  reserved 1;
+  int64 video_id = 2;
+  int32 progress = 3;
+}
+
+message ReportHistoryResponse {}
+
+message ListMineRequest {
+  reserved 1; // 原 user_id：调用者身份改由 metadata 透传（「我」列表即调用者自己）
+  int32 page      = 2;
+  int32 page_size = 3;
+}
+
+message VideoCardListResponse {
+  repeated VideoCard videos = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+// UserInteractionService 承载用户与视频的互动及「我」分组列表。
+service UserInteractionService {
+  rpc LikeVideo(LikeVideoRequest) returns (LikeResult);
+  rpc UnlikeVideo(UnlikeVideoRequest) returns (LikeResult);
+  rpc FavoriteVideo(FavoriteVideoRequest) returns (FavoriteResult);
+  rpc UnfavoriteVideo(UnfavoriteVideoRequest) returns (FavoriteResult);
+  rpc AddWatchLater(AddWatchLaterRequest) returns (WatchLaterResult);
+  rpc RemoveWatchLater(RemoveWatchLaterRequest) returns (WatchLaterResult);
+  rpc GetInteractionState(GetInteractionStateRequest) returns (InteractionState);
+  rpc ReportHistory(ReportHistoryRequest) returns (ReportHistoryResponse);
+  rpc ListLiked(ListMineRequest) returns (VideoCardListResponse);
+  rpc ListFavorites(ListMineRequest) returns (VideoCardListResponse);
+  rpc ListHistory(ListMineRequest) returns (VideoCardListResponse);
+  rpc ListWatchLater(ListMineRequest) returns (VideoCardListResponse);
+}
+
+// ===== 站内通知 =====
+
+// NotificationInfo 是对外暴露的一条通知，带触发者展示信息与视频标题。
+message NotificationInfo {
+  int64  id          = 1;
+  int32  type        = 2; // 1 评论被点赞、2 视频收到评论、3 评论收到回复
+  int64  actor_id    = 3;
+  string nickname    = 4;
+  string avatar      = 5;
+  int64  video_id    = 6;
+  string video_title = 7;
+  string content     = 8;
+  bool   is_read     = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+// NotificationUnread 是未读数查询与标记已读后的结果。
+message NotificationUnread {
+  int64 unread_count = 1;
+}
+
+message ListNotificationsRequest {
+  reserved 1; // 原 user_id：调用者身份改由 metadata 透传
+  int32 page      = 2;
+  int32 page_size = 3;
+}
+
+message ListNotificationsResponse {
+  repeated NotificationInfo notifications = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+message GetUnreadCountRequest {
+  reserved 1; // 原 user_id：未读数天然属于调用者，身份走 metadata
+}
+
+message MarkNotificationsReadRequest {
+  reserved 1; // 原 user_id：同上
+  int64 id = 2; // 0 表示全部标记已读
+}
+
+// NotificationService 提供站内通知的列表、未读数与标记已读。
+service NotificationService {
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+  rpc GetUnreadCount(GetUnreadCountRequest) returns (NotificationUnread);
+  rpc MarkNotificationsRead(MarkNotificationsReadRequest) returns (NotificationUnread);
+}

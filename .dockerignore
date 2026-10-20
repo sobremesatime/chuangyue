@@ -1,0 +1,29 @@
+# 版本控制
+.git
+.github
+.gitignore
+
+# 文档与本地配置
+docs
+*.md
+configs
+
+# 前端依赖与产物
+frontend/node_modules
+frontend/dist
+
+# 测试与部署脚本
+test
+deploy/compose
+deploy/k8s
+deploy/scripts
+
+# 本地运行产物（体积大且与镜像无关）：上传的视频/封面、编译出的二进制、本地计划文档
+uploads
+bin
+.trae
+
+# 本地文件
+*.local.*
+.env
+.env.*

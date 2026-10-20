@@ -1,0 +1,44 @@
+# 窗月 · K8s base（应用 + 接入层）
+#
+# 编排我们自己的 8 个进程：web（Nginx 接入层）/ gateway / user / video / interaction / feed /
+# search / transcode-worker。其中 web 是唯一对外入口，网关退居集群内部。
+# MySQL / Redis / Etcd / Kafka / MinIO 视为集群既有依赖（托管服务或独立运维），
+# 不在本 base 里编排；集群内的 Service 名必须是 mysql / redis / etcd / kafka / minio（见 config.yaml）。
+#
+# 用法（在仓库根目录）：
+#   kubectl apply -k deploy/k8s/overlays/dev     # 或 overlays/prod
+#
+# Service 名必须与 nginx.conf / config.yaml 里的主机名一致
+# （web / gateway / user / video / interaction / feed / search），
+# 因此这里**不能加 namePrefix**，否则服务发现与配置里的地址会对不上。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: chuangyue
+
+resources:
+  - namespace.yaml
+  # 注意：**不包含 Secret**。`chuangyue-secrets` 必须由部署者用
+  # `kubectl create secret generic`（或 SealedSecrets / External Secrets）预先创建，
+  # 见 ../README.md「配置与密钥」。仓库里只有一份不可直接 apply 的模板 secret.yaml.example。
+  # 这样做是为了堵住「误把 change-me-* 占位值带上生产」这条路：
+  # Secret 不存在时 Pod 会停在 CreateContainerConfigError（一眼能看见），
+  # 而不是悄悄用默认口令跑起来。
+  - pvc-uploads.yaml
+  - web.yaml
+  - gateway.yaml
+  - user.yaml
+  - video.yaml
+  - interaction.yaml
+  - feed.yaml
+  - search.yaml
+  - transcode-worker.yaml
+
+# 用文件生成 ConfigMap（name 固定为 chuangyue-config，供各 Pod 以 subPath 挂载为 /app/config.yaml）。
+# 关掉名字哈希后缀，卷引用才不必做 nameReference 替换。
+configMapGenerator:
+  - name: chuangyue-config
+    files:
+      - config.yaml
+generatorOptions:
+  disableNameSuffixHash: true

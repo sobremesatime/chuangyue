@@ -1,0 +1,74 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+!coverage.go
+*.coverprofile
+profile.cov
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Editor/IDE
+# .idea/
+# .vscode/
+
+# 敏感信息：服务器 IP / 密码 / 密钥等本地记录，绝不入库
+*.local.md
+*.local.*
+!*.local.example.md
+
+# 环境变量
+.env.*
+!.env.example
+
+# 真实环境配置（只提交 example）
+configs/dev/*.yaml
+configs/test/*.yaml
+configs/prod/*.yaml
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 构建产物
+bin/
+dist/
+
+# 系统与 IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 不入库：Trae 生成物（.trae/、.trae-html-share-packages/）与个人设计文档（docs/）
+# 为什么：都是本地过程性材料，不随仓库公开；分享包里打包的正是 docs/ 的 HTML 设计文档。
+# README / deploy README 里原先指向 docs/ 的引用已改为「本地文档」表述，不会留下失效链接。
+.trae/
+.trae-html-share-packages/
+docs/
+
+# 不入库：运行时产生的用户数据（上传源视频、头像、HLS 转码产物）
+# 为什么：这是业务运行数据而非源码，且体积大；备份由 deploy/scripts/backup.sh 负责，不进 Git。
+# 注意：服务器上该目录必须持久化（用户上传的源文件丢了不可再生），k8s 侧挂在 chuangyue-uploads PVC。
+uploads/
