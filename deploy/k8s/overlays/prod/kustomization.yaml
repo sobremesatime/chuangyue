@@ -73,9 +73,32 @@ generatorOptions:
   disableNameSuffixHash: true
 
 patches:
-  # 上传共享卷改为「节点本地 + 四类 Pod 同节点」：k3s 只有 local-path（RWO）。
-  # 有真正的 RWX 存储时删掉这一行；细节与代价见 local-storage.yaml 文件头。
+  # 上传共享卷改为「节点本地」：k3s 只有 local-path（RWO）。
+  # 有真正的 RWX 存储时删掉这一段与下面四条节点固定补丁；细节与代价见 local-storage.yaml 文件头。
   - path: local-storage.yaml
+  # 四个用到上传卷的 Deployment 必须落在同一节点（RWO 的共享前提），否则会因卷已被
+  # 其它节点挂载而 Pending。这里用「一次一个文档」的内联补丁而不是多文档文件，
+  # 因为 kustomize v5.0.x 无法解析多文档补丁（CI 曾因此报 unable to parse SM or JSON patch）。
+  - target: { kind: Deployment, name: user }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/storage: "true" }
+  - target: { kind: Deployment, name: video }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/storage: "true" }
+  - target: { kind: Deployment, name: gateway }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/storage: "true" }
+  - target: { kind: Deployment, name: transcode-worker }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/storage: "true" }
   # 无状态服务统一抬高资源档
   - target:
       kind: Deployment
