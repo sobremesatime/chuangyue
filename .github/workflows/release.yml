@@ -8,7 +8,11 @@ name: Release Images
 #   - 手动触发（workflow_dispatch）-> 同样按分支规则出标签
 #
 # 凭据：仅用 Actions 内置的 GITHUB_TOKEN，无需额外 Secret（见 packages: write）。
-# 镜像地址：ghcr.io/<owner>/chuangyue/<service>，与 overlays 里的 newName 一致。
+# 镜像地址：ghcr.io/<owner>/chuangyue-app/<service>，与 overlays 里的 newName 一致。
+# 为什么是 chuangyue-app 而不是 chuangyue：仓库曾删库重建，旧的 chuangyue/<service> 包名
+# 被残留的孤儿包（网页可见、点开 404、API 查不到）占住，导致 GITHUB_TOKEN 推送时
+# 报 permission_denied: write_package。换一个未被占用的包名是最直接的解法，且当时集群尚未部署，
+# 没有任何迁移成本。
 
 on:
   push:
@@ -18,7 +22,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAMESPACE: ${{ github.repository_owner }}/chuangyue
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}/chuangyue-app
 
 permissions:
   contents: read
@@ -68,11 +72,15 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.name }}
           # 标签规则（逐行，块内不能写 # 注释）：
-          #   type=ref,event=branch      -> 分支名，main 分支即 dev
+          #   type=raw,value=dev         -> main 分支打 dev（dev overlay 用的就是这个名字）。
+          #                                 注意：type=ref,event=branch 产出的是真实分支名 main，
+          #                                 所以必须显式加这一条，否则 dev overlay 永远拉不到镜像。
+          #   type=ref,event=branch      -> 真实分支名（main），保留用于追溯
           #   type=semver,pattern={{version}} -> v1.0.0 -> 1.0.0（prod overlay 用的名字）
           #   type=sha                   -> sha-xxxxxxx，便于回滚追溯
           #   type=raw,value=latest      -> 仅 v*.*.* 标签时打 latest
           tags: |
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=sha,prefix=sha-,format=short

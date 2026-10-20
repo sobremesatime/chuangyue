@@ -23,26 +23,26 @@ resources:
 
 images:
   - name: chuangyue/web
-    newName: ghcr.io/sobremesatime/chuangyue/web
+    newName: ghcr.io/sobremesatime/chuangyue-app/web
     newTag: dev
   - name: chuangyue/gateway
-    newName: ghcr.io/sobremesatime/chuangyue/gateway
+    newName: ghcr.io/sobremesatime/chuangyue-app/gateway
     newTag: dev
   - name: chuangyue/user
-    newName: ghcr.io/sobremesatime/chuangyue/user
+    newName: ghcr.io/sobremesatime/chuangyue-app/user
     newTag: dev
   - name: chuangyue/video
-    newName: ghcr.io/sobremesatime/chuangyue/video
+    newName: ghcr.io/sobremesatime/chuangyue-app/video
     newTag: dev
   - name: chuangyue/interaction
-    newName: ghcr.io/sobremesatime/chuangyue/interaction
+    newName: ghcr.io/sobremesatime/chuangyue-app/interaction
     newTag: dev
   - name: chuangyue/feed
-    newName: ghcr.io/sobremesatime/chuangyue/feed
+    newName: ghcr.io/sobremesatime/chuangyue-app/feed
     newTag: dev
   - name: chuangyue/search
-    newName: ghcr.io/sobremesatime/chuangyue/search
+    newName: ghcr.io/sobremesatime/chuangyue-app/search
     newTag: dev
   - name: chuangyue/transcode-worker
-    newName: ghcr.io/sobremesatime/chuangyue/transcode-worker
+    newName: ghcr.io/sobremesatime/chuangyue-app/transcode-worker
     newTag: dev

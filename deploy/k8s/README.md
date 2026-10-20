@@ -78,7 +78,7 @@ deploy/k8s/
 - `v1.0.0` → 标签 `1.0.0` + `latest`（prod overlay 用的是 `1.0.0`）
 - 每个提交另附 `sha-xxxxxxx` 标签，便于回滚追溯
 
-镜像地址为 `ghcr.io/<owner>/chuangyue/<service>`，凭据只用 Actions 内置的 `GITHUB_TOKEN`
+镜像地址为 `ghcr.io/<owner>/chuangyue-app/<service>`，凭据只用 Actions 内置的 `GITHUB_TOKEN`
 （工作流声明 `permissions: packages: write`），**无需配置额外 Secret**。
 两个 overlay 的 `images:` 均已通过 `newName` 指向该地址。
 
@@ -97,16 +97,16 @@ deploy/k8s/
 TAG=1.0.0
 for svc in gateway user video interaction feed search transcode-worker; do
   docker build -f deploy/docker/Dockerfile --build-arg SERVICE=$svc \
-    -t ghcr.io/<owner>/chuangyue/$svc:$TAG .
-  docker push ghcr.io/<owner>/chuangyue/$svc:$TAG
+    -t ghcr.io/<owner>/chuangyue-app/$svc:$TAG .
+  docker push ghcr.io/<owner>/chuangyue-app/$svc:$TAG
 done
 ```
 
 接入层 `web` 用**另一个** Dockerfile（Node 构建前端 → Nginx 托管，配置已打进镜像）：
 
 ```bash
-docker build -f deploy/nginx/Dockerfile -t ghcr.io/<owner>/chuangyue/web:$TAG .
-docker push ghcr.io/<owner>/chuangyue/web:$TAG
+docker build -f deploy/nginx/Dockerfile -t ghcr.io/<owner>/chuangyue-app/web:$TAG .
+docker push ghcr.io/<owner>/chuangyue-app/web:$TAG
 ```
 
 > 想把镜像放到别的仓库时，改各 overlay 的 `images:` `newName` 即可（如 `registry.example.com/chuangyue/web`）。

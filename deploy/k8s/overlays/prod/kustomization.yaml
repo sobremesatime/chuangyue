@@ -39,28 +39,28 @@ replicas:
 # GHCR 包默认私有，集群拉取需要 imagePullSecret（见 deploy/k8s/README.md）。
 images:
   - name: chuangyue/web
-    newName: ghcr.io/sobremesatime/chuangyue/web
+    newName: ghcr.io/sobremesatime/chuangyue-app/web
     newTag: "1.0.0"
   - name: chuangyue/gateway
-    newName: ghcr.io/sobremesatime/chuangyue/gateway
+    newName: ghcr.io/sobremesatime/chuangyue-app/gateway
     newTag: "1.0.0"
   - name: chuangyue/user
-    newName: ghcr.io/sobremesatime/chuangyue/user
+    newName: ghcr.io/sobremesatime/chuangyue-app/user
     newTag: "1.0.0"
   - name: chuangyue/video
-    newName: ghcr.io/sobremesatime/chuangyue/video
+    newName: ghcr.io/sobremesatime/chuangyue-app/video
     newTag: "1.0.0"
   - name: chuangyue/interaction
-    newName: ghcr.io/sobremesatime/chuangyue/interaction
+    newName: ghcr.io/sobremesatime/chuangyue-app/interaction
     newTag: "1.0.0"
   - name: chuangyue/feed
-    newName: ghcr.io/sobremesatime/chuangyue/feed
+    newName: ghcr.io/sobremesatime/chuangyue-app/feed
     newTag: "1.0.0"
   - name: chuangyue/search
-    newName: ghcr.io/sobremesatime/chuangyue/search
+    newName: ghcr.io/sobremesatime/chuangyue-app/search
     newTag: "1.0.0"
   - name: chuangyue/transcode-worker
-    newName: ghcr.io/sobremesatime/chuangyue/transcode-worker
+    newName: ghcr.io/sobremesatime/chuangyue-app/transcode-worker
     newTag: "1.0.0"
 
 # 覆盖 base 的 config.yaml（behavior: merge 只替换同名 key）
