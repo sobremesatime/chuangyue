@@ -226,7 +226,9 @@ k8s 里没有 compose 的 `/docker-entrypoint-initdb.d` 机制，`migrations/` *
 for f in migrations/*.sql; do
   echo "==> $f"
   kubectl -n chuangyue exec -i mysql-0 -- \
-    mysql -uroot -p"$CHUANGYUE_MYSQL_PASSWORD" < "$f"
+    mysql -uroot -p"$CHUANGYUE_MYSQL_PASSWORD" chuangyue < "$f"
+  # ↑ 必须带库名 chuangyue：migrations/0001~0016 都是「无库名前缀」的 CREATE/ALTER TABLE，
+  #   不选库会报 ERROR 1046 (3D000): No database selected。
 done
 ```
 
@@ -240,7 +242,8 @@ kubectl -n chuangyue exec -i mysql-0 -- \
   -e "SHOW COLUMNS FROM user LIKE 'token_version';"      # 有输出就说明已经跑过
 
 kubectl -n chuangyue exec -i mysql-0 -- \
-  mysql -uroot -p"$CHUANGYUE_MYSQL_PASSWORD" < migrations/0016_add_user_token_version.sql
+  mysql -uroot -p"$CHUANGYUE_MYSQL_PASSWORD" chuangyue < migrations/0016_add_user_token_version.sql
+# ↑ 0016 是未带库名的 ALTER TABLE user，同样必须指定 chuangyue 库。
 ```
 
 > 为什么没有迁移工具：项目只有 16 个一次性脚本、且要兼容「本地 compose 空库自动初始化」，

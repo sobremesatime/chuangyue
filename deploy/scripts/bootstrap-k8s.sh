@@ -266,9 +266,12 @@ else
     for f in "$REPO_ROOT"/migrations/*.sql; do
       log "==> $(basename "$f")"
       if [[ "$DRY_RUN" == 1 ]]; then
-        log "+ kubectl -n $K8S_NAMESPACE exec -i $MYSQL_POD_NAME -- mysql -uroot … < $(basename "$f")"
+        log "+ kubectl -n $K8S_NAMESPACE exec -i $MYSQL_POD_NAME -- mysql -uroot chuangyue < $(basename "$f")"
       else
-        mysql_in_pod "" < "$f"
+        # 必须指定 chuangyue 库：migrations/0001~0016 写的都是「无库名前缀」的 CREATE/ALTER TABLE，
+        # 在 compose 里靠 docker-entrypoint 的 MYSQL_DATABASE=chuangyue 自动选中默认库；
+        # 这里直接 mysql -uroot 不选库会报 ERROR 1046 (3D000): No database selected。
+        mysql_in_pod chuangyue < "$f"
       fi
     done
     log "灌库完成（0015 已建 chuangyue_interaction 库与独立账号）"
