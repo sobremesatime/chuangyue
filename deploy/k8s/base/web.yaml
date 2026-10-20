@@ -35,7 +35,7 @@ spec:
           command:
             - sh
             - -c
-            - until nslookup gateway >/dev/null 2>&1; do echo "等待网关 Service 就绪..."; sleep 2; done
+            - until getent hosts gateway >/dev/null 2>&1; do echo "等待网关 Service 就绪..."; sleep 2; done
           resources:
             requests:
               cpu: 10m

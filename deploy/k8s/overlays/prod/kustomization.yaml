@@ -17,15 +17,18 @@ resources:
   - ../../base
   - ingress.yaml
 
+# 副本数：无状态服务（web / interaction / feed / search）可安全跑 2 副本做滚动更新零停机。
+# gateway / user / video 因共用 RWO 上传卷、被钉在同一节点（node-2），2 副本既无法跨节点高可用、
+# 又会挤爆单台 2C 机器的 CPU requests，故固定 1 副本（横向扩容的前提是换 RWX 存储 + 去掉节点 pin）。
 replicas:
   - name: web
     count: 2
   - name: gateway
-    count: 2
+    count: 1
   - name: user
-    count: 2
+    count: 1
   - name: video
-    count: 2
+    count: 1
   - name: interaction
     count: 2
   - name: feed
