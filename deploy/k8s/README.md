@@ -292,9 +292,10 @@ kubectl -n chuangyue exec -i mysql-0 -- \
   原因是 **nginx 只在启动时解析一次 upstream 域名**，若 `web` 先于网关 Service 起来会因解析失败而 CrashLoop。
 - **优雅退出**：`terminationGracePeriodSeconds: 30`（Worker 60），配合应用内的 GracefulStop，
   滚动更新/缩容时在途请求不会被硬切。
-- **Ingress**（仅 prod，指向 `web`）：`proxy-body-size` 放开到 2048m，否则大文件上传会被 Nginx 拦成 413。
-  若集群是 k3s 且沿用自带 Traefik，请把 `ingressClassName` 与 annotations 换成 Traefik 的写法——
-  不要和 nginx-ingress 的配置混用。
+- **Ingress**（仅 prod，指向 `web`）：已按 **k3s 自带的 Traefik** 编写（`ingressClassName: traefik`），
+  复用 Traefik 已占用的 80/443，不要再给 `web` 建 LoadBalancer（会与 Traefik 抢端口）。
+  当前**不写 `host`**（catch-all），以便用节点 IP 直接验收；挂域名时补回 `host` 与 `tls`。
+  上传体积无需像 nginx-ingress 那样配 `proxy-body-size`——Traefik 默认不限制请求体。
 - **指标暴露**：各 Pod 的容器端口已带 `metrics`（`9201`~`9206`，由 `-metrics-addr` 指定），
   网关的 `/metrics` 与业务同端口（`8080`）。**K8s 侧监控属集群级能力，本仓库不编排 Prometheus / Grafana / Alertmanager**——
   用 kube-prometheus-stack 按 Pod 注解 / ServiceMonitor 发现上述端口即可；

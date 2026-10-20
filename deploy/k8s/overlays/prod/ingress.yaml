@@ -4,12 +4,16 @@
 # 并把 /api 与 /uploads 反代给集群内的网关；网关自身不再对外暴露。
 # 因此这里指向的是 web，而不是 gateway。
 #
-# 依赖集群已装 Ingress Controller（示例用 nginx；其他实现请替换 annotations 与 ingressClassName）。
-# 注意：若集群是 k3s 且沿用自带的 Traefik，需把 ingressClassName 与 annotations 换成 Traefik 的写法，
-# 不要与这里混用（见 deploy/k8s/README.md「入口链路」）。
+# 为什么用 traefik：k3s 自带 Traefik 作为 Ingress Controller，并以 LoadBalancer 形式
+# 占用节点的 80/443。清单若写 nginx 或再给 web 建 LoadBalancer，都会拿不到入口
+# （前者无控制器接管，后者与 Traefik 抢端口）。用 traefik 即「复用 k3s 自带的大门」。
 #
-# proxy-body-size：上传接口允许最大 2048MB，Nginx Ingress 默认 1MB 会直接 413，必须放开；
-# read/send timeout 放宽以适配大文件与 HLS 分片的长连接。
+# 为什么暂时不写 host：当前阶段用 **IP 直连**验收（阶段八），浏览器发出的 Host 是节点 IP，
+# 与占位域名不匹配会被 Traefik 返回 404。去掉 host 即 catch-all，任意 Host 都能进来。
+# 阶段十挂域名时再补回 `host` 与 `tls`（见文件末尾注释），届时按域名精确路由。
+#
+# 关于上传体积：原来 nginx ingress 的 proxy-body-size 是为「默认 1MB 限制」兜底的；
+# Traefik 默认不限制请求体大小，因此这里不再需要等价注解，也不会 413。
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -17,15 +21,13 @@ metadata:
   labels:
     app.kubernetes.io/name: web
     app.kubernetes.io/part-of: chuangyue
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "2048m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
-    - host: chuangyue.example.com
-      http:
+    # 不写 host：匹配任意 Host（含直接用节点 IP 访问）。
+    # 挂域名后改成：
+    #   - host: chuangyue.me
+    - http:
         paths:
           - path: /
             pathType: Prefix
@@ -38,5 +40,5 @@ spec:
   # 注意 Refresh Token 的 Cookie 是 Secure，生产必须走 HTTPS 才带得上。
   # tls:
   #   - hosts:
-  #       - chuangyue.example.com
+  #       - chuangyue.me
   #     secretName: chuangyue-tls
