@@ -51,28 +51,28 @@ replicas:
 images:
   - name: chuangyue/web
     newName: ghcr.io/sobremesatime/chuangyue/web
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/gateway
     newName: ghcr.io/sobremesatime/chuangyue/gateway
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/user
     newName: ghcr.io/sobremesatime/chuangyue/user
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/video
     newName: ghcr.io/sobremesatime/chuangyue/video
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/interaction
     newName: ghcr.io/sobremesatime/chuangyue/interaction
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/feed
     newName: ghcr.io/sobremesatime/chuangyue/feed
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/search
     newName: ghcr.io/sobremesatime/chuangyue/search
-    newTag: "1.0.0"
+    newTag: "1.0.1"
   - name: chuangyue/transcode-worker
     newName: ghcr.io/sobremesatime/chuangyue/transcode-worker
-    newTag: "1.0.0"
+    newTag: "1.0.1"
 
 # 覆盖 base 的 config.yaml（behavior: merge 只替换同名 key）
 configMapGenerator:
