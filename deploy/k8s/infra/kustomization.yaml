@@ -37,17 +37,35 @@ resources:
   - redis.yaml
   - etcd.yaml
   - kafka.yaml
-  # MinIO 只有 upload.driver=minio 时才需要。当前生产是 upload.driver=local，
-  # 它跑着也不会有任何读写，白占 100m CPU / 256Mi 内存。
-  # 将来要切对象存储：取消下面这行注释 + 改 config 的 upload.driver=minio，再 apply。
-  # - minio.yaml
+  # MinIO：视频源文件 / 封面 / 头像的对象存储（upload.driver=minio）。
+  # 与 prod overlay 的 minio-ingress.yaml 必须同时启用/停用。
+  - minio.yaml
   # Elasticsearch：生产已启用（prod/config.yaml 里 search.es.enabled=true），
   # 关键词检索走 ES 索引（分词 + 相关度排序），索引由 Kafka 事件维护。
   # 若将来要关掉：注释本行 + 把 config 的 search.es.enabled 改回 false，
   # 搜索会自动退回视频库的 LIKE，功能不中断。
   - elasticsearch.yaml
   #
-  # ⚠️ 注释掉只是「以后不再 apply」，**不会删除已存在的 StatefulSet**，需手工清理一次。
-  # 当前只注释了 minio，清理它时执行：
+  # ⚠️ 凡是注释掉某一项，只是「以后不再 apply」，**不会删除已存在的 StatefulSet / PVC**。
+  # 例如要停用 MinIO，除了注释 minio.yaml，还要手工清理一次：
   #   kubectl -n chuangyue delete statefulset minio
   #   kubectl -n chuangyue delete pvc data-minio-0
+
+# 节点分配：ES 固定到 node-3（打 tier=edge 标签）。
+# ES 是 node-3 上最重的组件（requests 768Mi、实际约 1Gi），因此 node-3 只留
+# web / redis / etcd 陪它；interaction 与 search 已由 prod overlay 改钉到 node-1。
+# ⚠️ dev / 单节点环境没有这个标签，需给唯一节点补打，否则 ES 会 Pending：
+#   kubectl label node <节点名> chuangyue.io/tier=edge
+patches:
+  - target: { kind: StatefulSet, name: elasticsearch }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/tier: "edge" }
+  # MinIO 固定到 node-2：与 video / transcode-worker 同机，源文件的读写不跨 VXLAN；
+  # node-2 在 ES 与 feed / interaction / search 迁走后有约 1.2Gi 余量，放得下 256Mi。
+  - target: { kind: StatefulSet, name: minio }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/storage: "true" }

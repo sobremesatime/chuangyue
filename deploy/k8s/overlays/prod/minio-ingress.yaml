@@ -1,0 +1,41 @@
+# 窗月 · MinIO 的对外入口（**仅在切到 `upload.driver=minio` 时启用**）
+#
+# 为什么单独一个 Ingress，而不是塞进 ingress.yaml：
+#   MinIO 默认不部署。若这条规则常驻，Traefik 会持续报「后端 Service 不存在」、
+#   该路径固定 503，属于纯噪音。所以本文件在 prod/kustomization.yaml 的 resources
+#   里被注释掉，与 infra 的 minio.yaml 同一批打开/关闭。
+#
+# 为什么用「路径」而不是 NodePort + 节点公网 IP：
+#   1. public_url 一旦写死某个节点的 IP，那个节点就成了永久约束——而 MinIO 的
+#      local-path 卷已经绑了一台，再叠一层 IP 绑定等于把单点钉死两次；
+#   2. 走 Traefik 现成的 80，入口落哪个节点都行，Pod 重建也不影响对外地址；
+#   3. 不必在腾讯云防火墙额外放通 9000，少一个暴露面。
+#
+# 路径与桶名天然对齐：MinIO 的 S3 是 path-style（/bucket/key），桶名就是
+# chuangyue，所以 /chuangyue 前缀直接透传即可，**不要加 rewrite / stripPrefix**。
+#
+# 挂域名后无需改动本文件：Traefik 仍按最长前缀匹配，域名只影响 ingress.yaml 的 host。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  ingressClassName: traefik
+  rules:
+    # 不写 host：与 web 的 Ingress 一样是 catch-all，IP 直连与域名都能进。
+    # 注意不写 host 时，两个 Ingress 共用同一组入口，由 Traefik 按路径长度择优：
+    # /chuangyue（更长）优先于 /，其余请求仍落到 web。
+    - http:
+        paths:
+          - path: /chuangyue
+            pathType: Prefix
+            backend:
+              service:
+                name: minio-s3
+                port:
+                  name: s3
+          # 只暴露 S3 端口（9000）。Console（9001）**不要**加进来：
+          # 那是管理后台，凭据泄露即等于桶被接管，需要时用 port-forward。

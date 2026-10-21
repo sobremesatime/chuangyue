@@ -29,6 +29,31 @@ spec:
       port: 9001
       targetPort: console
 ---
+# 给 Ingress 用的普通 ClusterIP Service（只暴露 S3，不含 Console）。
+#
+# 为什么不能直接让 Ingress 指向上面那个 `minio`：它是 headless（clusterIP: None），
+# 只用于给 StatefulSet 提供稳定网络标识。Ingress 转发到 headless 时，
+# Traefik 需要自行解析 Pod IP，行为随版本变化且不利于排障。
+# 这一条走正常的 kube-proxy 负载均衡，入口只认它。
+#
+# Console（9001）刻意不在这里暴露：它是管理后台，只应通过
+# `kubectl -n chuangyue port-forward svc/minio 9001:9001` 临时访问。
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-s3
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

@@ -276,19 +276,29 @@ kubectl -n chuangyue exec -i mysql-0 -- \
 - **服务名固定**：base 里**不设 `namePrefix`**，因为 `config.yaml` 用服务名（`user` / `video` …）
   互相寻址，加前缀会导致发现与配置对不上。
 - **共享卷：base 要 RWX，prod 在 k3s 上降级为「节点本地 + 同节点」**。`video`（写源文件/封面）、
-  `transcode-worker`（读源、写 HLS）、`gateway`（静态托管 `/uploads`）、`user`（写头像）挂同一个 PVC，
+  `transcode-worker`（读源、写 HLS）、`gateway`（静态托管 `/uploads`）挂同一个 PVC，
   它们都是不同 Pod，所以 base 的 `chuangyue-uploads` 声明为 `ReadWriteMany`，需要 NFS / CephFS / 云 NAS。
   **k3s 只有 local-path（RWO）**，因此 `overlays/prod/local-storage.yaml` 做两件事：
   把该 PVC 改成 `ReadWriteOnce` + `local-path`，并用 `nodeSelector: chuangyue.io/storage=true`
-  把这四个 Deployment 钉在同一个节点上——RWO 的语义是「一个**节点**可写」，同节点上的多个 Pod 可以共享。
-  代价是这四类 Pod 没有跨节点容灾，且**必须给节点打标签**（否则一直 Pending）：
-  `kubectl label node <node-1> chuangyue.io/storage=true`。
-  有真正的 RWX 存储时删掉那个 patch 即可；也可以改 `upload.driver=minio`——但注意**只能解决视频侧**：
-  头像走的是 `internal/user/service/avatar.go` 的落盘实现（尚未接入 `pkg/storage`），切驱动后它仍写本地，
-  因此仍然需要一份可共享的卷（或者先把头像也接进存储抽象）。
-- **`user` 为什么也要挂这份卷**：头像由 `user` 落盘（`/app/uploads/<雪花ID>.ext`），却由一个**不同的进程**
-  ——`gateway` 的 `r.Static("/uploads", ...)`——对外提供。本地 `go run` 时两者共用一个工作目录，
-  所以「不挂卷也能用」是假象；容器化后不共享就必然「上传成功、图片 404」。
+  把这几个 Deployment 钉在同一个节点上——RWO 的语义是「一个**节点**可写」，同节点上的多个 Pod 可以共享。
+  代价是这些 Pod 没有跨节点容灾，且**必须给节点打标签**（否则一直 Pending）：
+  `kubectl label node <node-2> chuangyue.io/storage=true`。
+  有真正的 RWX 存储时删掉那个 patch 即可。
+- **`upload.driver=minio` 能解决哪一半**：视频源文件与封面进桶，但 **HLS 产物仍写本地卷**
+  （`transcode.output_dir`，由网关的 `/uploads` 静态托管），所以上面那条同节点约束不会因为切 MinIO 而消失。
+- **头像已接入 `pkg/storage`**：`upload.driver=minio` 时写桶（key 前缀 `avatar/`，换头像会删旧对象），
+  `local` 时仍写 `/app/uploads`。因此 **base 的 `user` 仍挂这份卷**（local 下 `gateway`
+  是另一个进程，不共享就「上传成功、图片 404」）。
+  **生产已切到 minio**：prod overlay 用一组 remove 补丁把 user 的 uploads 卷挂载去掉，
+  但**保留 nodeSelector 钉在 node-2**（与 gateway 同机走回环，且该节点水位最宽松）。
+  想让它彻底可漂移，删掉那条 nodeSelector 即可。
+- **MinIO 的对外入口走 Ingress 路径，不用 NodePort**：`overlays/prod/minio-ingress.yaml`
+  把 `/chuangyue` 前缀转发到 `minio-s3:9000`（只暴露 S3，**不含 Console 9001**）。
+  好处是 `upload.minio.public_url` 填站点入口的 IP / 域名即可——MinIO Pod 落在哪台都不影响地址，
+  也不必在防火墙额外放通 9000。该文件与 `infra/minio.yaml` **必须同时启用/停用**。
+- **节点分配是刻意排过的**：node-3 只有 1.9Gi，装完 ES（requests 768Mi）后余量很小，
+  因此 interaction / search 被改钉到 node-1；MinIO 钉在 node-2。
+  详细核算见《部署计划》第 0 节。
 - **探针**：接入层 / 网关用 HTTP `/healthz`；gRPC 服务用 `tcpSocket`；转码 Worker 无端口，不做端口探针，
   靠 `restartPolicy` 兜底（Kafka 未就绪时它会退出并由退避重启拉起，与 compose 行为一致）。
 - **接入层先等网关**：`web` 的 Pod 带一个 `initContainer`（`nslookup gateway` 轮询）。

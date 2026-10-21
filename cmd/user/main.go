@@ -32,6 +32,7 @@ import (
 	"github.com/sobremesatime/chuangyue/pkg/mailer"
 	"github.com/sobremesatime/chuangyue/pkg/metrics"
 	"github.com/sobremesatime/chuangyue/pkg/registry"
+	"github.com/sobremesatime/chuangyue/pkg/storage"
 	"github.com/sobremesatime/chuangyue/pkg/tracing"
 )
 
@@ -87,6 +88,13 @@ func main() {
 	}
 	defer func() { _ = reg.Close() }()
 
+	// 头像的落点。与视频服务共用同一份 upload 配置：
+	// driver=local 写本地盘，driver=minio 写对象存储——两者对业务代码没有差别。
+	store, err := storage.New(cfg.Upload)
+	if err != nil {
+		logger.L().Fatal("初始化存储驱动失败", zap.Error(err))
+	}
+
 	repo := userrepo.New(db)
 	svc := service.New(
 		repo,
@@ -95,7 +103,7 @@ func main() {
 		mail,
 		jwt.NewManager(cfg.JWT),
 		cfg.Verify,
-		cfg.Upload,
+		store,
 	)
 
 	// 进程级信号上下文：既让追踪在退出时 flush，也用于实例续租与优雅退出。

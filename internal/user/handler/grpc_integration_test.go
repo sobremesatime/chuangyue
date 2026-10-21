@@ -40,6 +40,7 @@ import (
 	"github.com/sobremesatime/chuangyue/pkg/jwt"
 	"github.com/sobremesatime/chuangyue/pkg/mailer"
 	"github.com/sobremesatime/chuangyue/pkg/registry"
+	"github.com/sobremesatime/chuangyue/pkg/storage"
 )
 
 func envOr(key, def string) string {
@@ -146,19 +147,13 @@ func testJWTConfig() config.JWTConfig {
 }
 
 // testService 用真实 MySQL / Redis / 邮件（log 驱动）构造用户服务。
-// localDir 为头像落盘目录，调用方传 t.TempDir() 避免污染 ./uploads。
+// localDir 为头像落盘根目录，调用方传 t.TempDir() 避免污染 ./uploads。
 func testService(t *testing.T, db *gorm.DB, rdb *redis.Client, localDir string) *service.Service {
 	t.Helper()
 
 	mail, err := mailer.New(config.MailConfig{Driver: mailer.DriverLog, From: "窗月 <no-reply@chuangyue.dev>"}, "dev")
 	if err != nil {
 		t.Fatalf("构造邮件发送器失败: %v", err)
-	}
-	ucfg := config.UploadConfig{
-		Driver:     "local",
-		LocalDir:   localDir,
-		MaxSizeMB:  2,
-		AllowedExt: []string{".jpg", ".jpeg", ".png", ".webp"},
 	}
 	return service.New(
 		userrepo.New(db),
@@ -167,7 +162,9 @@ func testService(t *testing.T, db *gorm.DB, rdb *redis.Client, localDir string) 
 		mail,
 		jwt.NewManager(testJWTConfig()),
 		testVerifyConfig(),
-		ucfg,
+		// 集成测试固定用本地驱动：头像写在 t.TempDir() 下，
+		// 断言可以直接按 /uploads/<key> 还原成文件路径检查落盘结果。
+		storage.NewLocal(localDir),
 	)
 }
 

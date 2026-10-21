@@ -16,6 +16,11 @@ namespace: chuangyue
 resources:
   - ../../base
   - ingress.yaml
+  # MinIO 的对外入口（路径 /chuangyue → minio-s3:9000）。
+  # 与 ../../infra 的 minio.yaml 必须**同时**启用/停用：
+  # 只开本体不开入口 → 封面 / 头像的绝对地址 404；
+  # 只开入口不开本体 → Traefik 持续报后端不存在。
+  - minio-ingress.yaml
 
 # 副本数：全部 1。
 # 本项目定位是单机规模上线，中间件（MySQL / Redis / Etcd / Kafka）均为单实例，
@@ -105,6 +110,41 @@ patches:
       - op: add
         path: /spec/template/spec/nodeSelector
         value: { chuangyue.io/storage: "true" }
+  # ⚠️ user 的 nodeSelector 保留：切到 minio 后它不再需要上传卷，但**仍钉在 node-2**。
+  # 理由是确定性优先——node-2 同时有 gateway，两者之间是高频 gRPC 调用，同机走回环；
+  # 且 node-1（~77% CPU）与 node-3（~69% 内存）都不如 node-2（~66% / ~64%）宽松。
+  # 真正的收益是下面这组补丁：去掉 uploads 卷挂载后，user 不再依赖 `chuangyue-uploads`，
+  # 即使那块 PVC 出问题也不影响用户服务启动。
+  # 想让它彻底可漂移时，把上面 user 的 nodeSelector 补丁删掉即可（三节点都放得下）。
+  - target: { kind: Deployment, name: user }
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts/1
+      - op: remove
+        path: /spec/template/spec/volumes/1
+  # feed 固定到 node-1（tier=core）：它纯无状态、不碰上传卷，放控制面节点可以避开
+  # node-2 的内存压力（那里有 Kafka / 转码 / 两个卷 Pod，且还要留给 MinIO）。
+  - target: { kind: Deployment, name: feed }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/tier: "core" }
+  # interaction / search 也迁到 node-1。
+  # 原因：node-3 只有 1.9Gi，装完 Elasticsearch（requests 768Mi，实际约 1Gi）后
+  # 只剩约 600Mi，再放两个 256Mi 的应用就到 ~97%，任何一次重建都可能 Pending。
+  # 而 node-1 有 3.5Gi、CPU 实际只用 4%，是全集群最有余量的节点。
+  # 代价是 node-1 的 CPU requests 到 ~77%，但 CPU 是可压缩资源（超了只是变慢），
+  # 不像内存一超就 Pending / OOM，因此把「内存余量」留给不可压缩的这一侧更划算。
+  - target: { kind: Deployment, name: interaction }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/tier: "core" }
+  - target: { kind: Deployment, name: search }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { chuangyue.io/tier: "core" }
   # 无状态服务统一抬高资源档
   - target:
       kind: Deployment

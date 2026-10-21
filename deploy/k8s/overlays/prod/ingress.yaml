@@ -36,7 +36,8 @@ spec:
                 name: web
                 port:
                   name: http
-  # 启用 HTTPS 时取消注释并配置证书（可用 cert-manager 自动签发）；
+  # 启用 HTTPS 时取消注释并配置证书（证书在腾讯云控制台申请，手工导入成 Secret `chuangyue-tls`，
+  # 不装 cert-manager；完整步骤见《部署计划》阶段十）。
   # 注意 Refresh Token 的 Cookie 是 Secure，生产必须走 HTTPS 才带得上。
   # tls:
   #   - hosts:

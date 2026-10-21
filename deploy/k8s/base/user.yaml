@@ -74,8 +74,11 @@ spec:
               mountPath: /app/config.yaml
               subPath: config.yaml
               readOnly: true
-            # 头像落 ./uploads，而 /uploads 由网关从这份共享卷托管：两者是不同进程，
-            # 不挂同一份卷头像就 404（本地 go run 时两个进程共用一个工作目录，会掩盖此问题）。
+            # 头像走 pkg/storage：minio 驱动下写桶，不需要这份卷；
+            # local 驱动下仍需它，因为 /uploads 由**另一个进程**网关托管——
+            # 不挂同一份卷，头像就会「上传成功、图片 404」。
+            # 生产已切到 minio，prod overlay 用 remove 补丁把这处挂载去掉了
+            # （nodeSelector 仍保留，钉在 node-2）。回滚到 local 时务必一并还原。
             - name: uploads
               mountPath: /app/uploads
       volumes:

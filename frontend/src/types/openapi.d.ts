@@ -257,7 +257,7 @@ export interface paths {
         put?: never;
         /**
          * 上传 / 更换当前用户头像（multipart/form-data）
-         * @description 头像落本地磁盘并通过网关 /uploads 直接访问；后续版本落 MinIO / CDN。
+         * @description 头像写入配置的存储驱动（upload.driver=local 落本地盘、=minio 进桶的 avatar/ 前缀）， 返回可直接访问的绝对或相对地址；换头像时旧文件会被删除。上限 2MB，支持 JPG / PNG / WebP。
          */
         post: {
             parameters: {

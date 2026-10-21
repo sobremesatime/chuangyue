@@ -20,6 +20,7 @@ import (
 	"github.com/sobremesatime/chuangyue/pkg/logger"
 	"github.com/sobremesatime/chuangyue/pkg/mailer"
 	"github.com/sobremesatime/chuangyue/pkg/snowflake"
+	"github.com/sobremesatime/chuangyue/pkg/storage"
 	"github.com/sobremesatime/chuangyue/pkg/utils"
 )
 
@@ -42,7 +43,9 @@ type Service struct {
 	mail    mailer.Sender
 	jwt     *jwt.Manager
 	vcfg    config.VerifyConfig
-	ucfg    config.UploadConfig
+	// store 是头像的落点：local 驱动写本地盘、minio 驱动进桶。
+	// 由 main 注入而不是在这里按 ucfg 自行构造——构造失败要能让进程拒绝启动。
+	store storage.Storage
 }
 
 // New 构造 Service。
@@ -55,7 +58,7 @@ func New(
 	mail mailer.Sender,
 	jwtMgr *jwt.Manager,
 	vcfg config.VerifyConfig,
-	ucfg config.UploadConfig,
+	store storage.Storage,
 ) *Service {
 	return &Service{
 		QueryService: NewQueryService(repo),
@@ -65,7 +68,7 @@ func New(
 		mail:         mail,
 		jwt:          jwtMgr,
 		vcfg:         vcfg,
-		ucfg:         ucfg,
+		store:        store,
 	}
 }
 

@@ -84,7 +84,12 @@ verify:
   ip_hourly_limit: 20
 
 upload:
-  driver: local
+  # 对象存储驱动：视频源文件 / 封面 / 头像写 MinIO 的 chuangyue 桶。
+  # HLS 产物仍落本地卷（transcode.output_dir），由网关的 /uploads 静态托管，
+  # 所以 video / gateway / transcode-worker 与那块 PVC 的同节点约束**不会**因切驱动而消失。
+  # 回滚：改回 local 后，务必同时恢复 prod/kustomization.yaml 里 user 的卷挂载
+  #      （当前那组 remove 补丁会把它删掉），并 rollout restart 四个服务。
+  driver: minio
   local_dir: "./uploads"
   max_size_mb: 2048
   chunk_size_mb: 8
@@ -96,7 +101,11 @@ upload:
     bucket: chuangyue
     use_ssl: false
     region: us-east-1
-    public_url: ""
+    # 浏览器直接访问的地址：封面 / 头像会以它拼成绝对 URL 返回。
+    # 走 Traefik 的 80——minio-ingress.yaml 把 /chuangyue 转发到 minio-s3:9000，
+    # 因此不需要额外暴露节点 IP 或 9000 端口，Pod 换节点也不影响这个地址。
+    # 绑定域名并上 HTTPS 后改成 https://<域名>/chuangyue。
+    public_url: "http://111.230.240.121/chuangyue"
 
 kafka:
   brokers: ["kafka:9092"]

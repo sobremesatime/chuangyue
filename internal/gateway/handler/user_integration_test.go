@@ -42,6 +42,7 @@ import (
 	"github.com/sobremesatime/chuangyue/pkg/middleware"
 	"github.com/sobremesatime/chuangyue/pkg/registry"
 	"github.com/sobremesatime/chuangyue/pkg/snowflake"
+	"github.com/sobremesatime/chuangyue/pkg/storage"
 	"github.com/sobremesatime/chuangyue/pkg/utils"
 )
 
@@ -100,12 +101,8 @@ func testUserService(t *testing.T, db *gorm.DB, rdb *redis.Client, localDir stri
 			EmailHourlyLimit: 5,
 			IPHourlyLimit:    20,
 		},
-		config.UploadConfig{
-			Driver:     "local",
-			LocalDir:   localDir,
-			MaxSizeMB:  2,
-			AllowedExt: []string{".jpg", ".jpeg", ".png", ".webp"},
-		},
+		// 集成测试固定用本地驱动，头像落在 localDir 下。
+		storage.NewLocal(localDir),
 	)
 }
 

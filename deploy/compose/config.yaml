@@ -73,9 +73,11 @@ verify:
   ip_hourly_limit: 20
 
 upload:
-  # 本地磁盘驱动：目录是 /app/uploads，由 compose 的 uploads_data 卷在
-  # video（写入）/ transcode-worker（写 HLS）/ gateway（静态托管）之间共享。
-  driver: local
+  # 对象存储驱动：视频源文件 / 头像 / 封面写进 MinIO 的 chuangyue 桶。
+  # HLS 产物仍落在 /app/uploads（compose 的 uploads_data 卷由 video / transcode-worker /
+  # gateway 共享），所以播放地址依旧是网关的 /uploads 静态路由，不依赖桶的匿名读。
+  # 切回本地盘只需把 driver 改回 local 并重启四个存储相关服务。
+  driver: minio
   local_dir: "./uploads"
   max_size_mb: 2048
   chunk_size_mb: 8
@@ -87,7 +89,9 @@ upload:
     bucket: chuangyue
     use_ssl: false
     region: us-east-1
-    public_url: ""
+    # 容器内 endpoint 是 minio:9000，浏览器解析不了；对外地址必须写宿主机映射端口。
+    # 封面 / 头像是绝对地址，浏览器会直连这里，**桶必须允许匿名只读**，否则 403。
+    public_url: "http://127.0.0.1:9000/chuangyue"
 
 kafka:
   # compose 网络内用 INTERNAL 监听器（kafka:9094）；宿主机 go run 才用 127.0.0.1:9092。
