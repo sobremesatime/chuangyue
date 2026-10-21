@@ -57,7 +57,27 @@ spec:
         fsGroup: 1000
       containers:
         - name: elasticsearch
-          image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          # 用 DaoCloud 的公共镜像站，而不是官方的 docker.elastic.co。
+          #
+          # 原因（2026-10-21 实测）：node-3 上从官方域名 `ctr images import` 多架构 tar 后，
+          # ctr / crictl 都能列出、`ctr images check` 显示 complete 11/11，但 CRI 的
+          # ImageStatus 时灵时不灵 —— 同一个 tag 有时能起（1/1 Running），Pod 重建后又
+          # 变成 ErrImageNeverPull。换成从镜像站 `--platform linux/amd64` 拉取后稳定可用。
+          #
+          # 代价：依赖第三方镜像站。若该站不可用，回退方式有二：
+          #   ① 改回 docker.elastic.co + 在每台节点预置镜像（ctr images pull --platform）
+          #   ② 用腾讯云 TCR 同步官方镜像到自己仓库，再改这里的地址
+          image: elastic.m.daocloud.io/elasticsearch/elasticsearch:8.15.3
+          # IfNotPresent + 手动预置：先在节点上把镜像拉好，之后启动直接命中本地副本，
+          # 不依赖网络、也不用每次等 642MB。
+          #
+          # 为什么地址是 daocloud 而不是官方域名：node-3 的 CRI 对本地 tag 的查询不稳定，
+          # 实测 `docker.elastic.co/...` 这个 tag 时好时坏（同一镜像、同一 tag，
+          # 有时能起、Pod 重建后报 ErrImageNeverPull）；而 daocloud 的 tag 查询正常。
+          #
+          # 换节点 / 新增节点时的**前置动作**（否则 Pod 会卡在 Pulling）：
+          #   sudo k3s ctr images pull --platform linux/amd64 \
+          #     elastic.m.daocloud.io/elasticsearch/elasticsearch:8.15.3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
