@@ -4,8 +4,11 @@
 // 内芯固定为浅色（.cy-theme-light）：无论用户当前是深色还是浅色模式，弹框都是
 // 月白卡片 + 文字墨，与品牌标识「白底 · 首选」的规则一致，两种模式下观感统一。
 //
-// 可访问性：role="dialog" + aria-modal、Escape 关闭、Tab 焦点圈定在弹框内、
+// 可访问性：role="dialog" + aria-modal、Tab 焦点圈定在弹框内、
 // 打开时锁住页面滚动、关闭后把焦点还给唤出它的按钮。
+//
+// 关闭方式只有一种：右上角的关闭按钮。点遮罩空白处、按 Escape 都不关闭——
+// 登录 / 注册表单填到一半被误触清空，是最容易让人放弃注册的体验。
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -351,7 +354,7 @@ async function handleReset(): Promise<void> {
   }
 }
 
-// ---- 弹框行为：滚动锁定、焦点圈定、Escape 关闭 ----
+// ---- 弹框行为：滚动锁定、焦点圈定 ----
 
 let lastActiveElement: HTMLElement | null = null
 let scrollLocked = false
@@ -381,8 +384,9 @@ function focusableItems(): HTMLElement[] {
 
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
+    // Escape 不关闭弹框（只能点右上角关闭按钮），但仍要拦住冒泡：
+    // 顶栏、播放器等处也监听 Escape，放过去会把底下的浮层一起关掉。
     event.stopPropagation()
-    modal.close()
     return
   }
   if (event.key !== 'Tab') {
@@ -436,7 +440,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <Transition name="auth-modal">
-      <div v-if="modal.open" class="auth-modal" @click.self="modal.close()">
+      <div v-if="modal.open" class="auth-modal">
         <div
           ref="dialogRef"
           class="cy-theme-light auth-modal__dialog"
