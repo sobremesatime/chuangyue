@@ -24,7 +24,7 @@ deploy/k8s/
 ├── backup/                   # 可选：集群内定时备份（CronJob + 归档 PVC + 备份脚本）
 └── overlays/
     ├── dev/                  # 单副本、tag=dev、沿用 base 配置
-    └── prod/                 # 2 副本、tag=1.0.0、prod 配置、资源抬高、Ingress(→web)、
+    └── prod/                 # 1 副本、tag=1.0.1、prod 配置、资源抬高、Ingress(→web)、
                               # local-storage.yaml（k3s 只有 local-path 时的共享卷适配）
 ```
 
@@ -65,6 +65,20 @@ deploy/k8s/
 
 > 依赖部署在别的命名空间时，请把配置里的主机名写成 FQDN（如 `mysql.infra.svc.cluster.local`）。
 
+> **Elasticsearch 的镜像来源**：官方镜像位于 `docker.elastic.co`，国内没有可用的公共代理。
+> 清单统一使用 DaoCloud 镜像站的同一镜像（digest 一致）：
+> `elastic.m.daocloud.io/elasticsearch/elasticsearch:8.15.3`，配合 `imagePullPolicy: IfNotPresent`。
+> **部署到新节点前需先预置镜像**，否则 Pod 会停在 `Pulling`：
+>
+> ```bash
+> sudo k3s ctr images pull --platform linux/amd64 \
+>   elastic.m.daocloud.io/elasticsearch/elasticsearch:8.15.3
+> ```
+>
+> 需要使用自有仓库时，可将同一镜像同步至 TCR 等私有 registry，并同步修改
+> `infra/elasticsearch.yaml` 的 `image` 字段；`--platform linux/amd64` 不能省略，
+> 否则可能拉取到多架构索引导致运行时无法解析。
+
 数据库结构由 `migrations/` 提供，**不会自动执行**（k8s 没有 compose 的 initdb 机制），
 部署时必须手工跑一次——见下文「初始化数据库」。
 
@@ -75,7 +89,7 @@ deploy/k8s/
 `.github/workflows/release.yml` 在 **main 分支推送**或 **`v*.*.*` 标签**上，用矩阵构建并推送 8 个镜像到 GHCR：
 
 - `main` → 标签 `dev`（dev overlay 用的就是这个名字）
-- `v1.0.0` → 标签 `1.0.0` + `latest`（prod overlay 用的是 `1.0.0`）
+- `v1.0.1` → 标签 `1.0.1` + `latest`（prod overlay 当前使用的是 `1.0.1`）
 - 每个提交另附 `sha-xxxxxxx` 标签，便于回滚追溯
 
 镜像地址为 `ghcr.io/<owner>/chuangyue/<service>`，凭据只用 Actions 内置的 `GITHUB_TOKEN`

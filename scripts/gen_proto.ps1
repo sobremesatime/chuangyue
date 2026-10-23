@@ -1,4 +1,4 @@
-﻿﻿# 由 api/proto 下的契约生成 Go 代码（消息结构 + gRPC 桩）。
+﻿﻿﻿﻿# 由 api/proto 下的契约生成 Go 代码（消息结构 + gRPC 桩）。
 #
 # Windows 侧入口，与 scripts/gen_proto.sh 等价；Linux / macOS 仍走 `make proto`。
 # 本机若禁用了脚本执行，请用：powershell -ExecutionPolicy Bypass -File scripts/gen_proto.ps1
