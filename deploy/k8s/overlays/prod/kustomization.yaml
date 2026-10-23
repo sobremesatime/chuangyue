@@ -51,7 +51,7 @@ replicas:
 images:
   - name: chuangyue/web
     newName: ghcr.io/sobremesatime/chuangyue/web
-    newTag: "1.0.1"
+    newTag: "1.0.2"
   - name: chuangyue/gateway
     newName: ghcr.io/sobremesatime/chuangyue/gateway
     newTag: "1.0.1"
