@@ -207,13 +207,40 @@ func (r *Repository) UpdateTranscodeResult(ctx context.Context, id int64, playUR
 		Error
 }
 
-// Delete 按主键物理删除视频记录。
+// Delete 按主键物理删除视频记录，并清理它在合集里的关联。
 //
 // 关联数据（评论 / 点赞 / 收藏 / 弹幕 / 历史）已拆入独立库 chuangyue_interaction，
 // 由视频域投递 chuangyue.video.deleted 事件、互动域异步清理（PurgeService.HandleVideoDeleted），
-// 所以这里只做物理删除、不级联：互动表不在本库，级联反而越界。
+// 那部分不在这里级联：互动表不在本库，级联反而越界。
+//
+// 但合集关联（collection_video）就在本库、且没有外键：留着它，合集会继续展示一个
+// 已经打不开的视频，video_count 也会虚高。因此删除视频、删除关联、重算受影响合集
+// 的计数必须在同一事务里完成——否则中途失败会留下「视频还在、关联已删」或反之的中间态。
 func (r *Repository) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&model.Video{}, id).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var collectionIDs []int64
+		if err := tx.Model(&model.CollectionVideo{}).
+			Where("video_id = ?", id).
+			Distinct().
+			Pluck("collection_id", &collectionIDs).
+			Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("video_id = ?", id).Delete(&model.CollectionVideo{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.Video{}, id).Error; err != nil {
+			return err
+		}
+
+		for _, collectionID := range collectionIDs {
+			if err := recountCollectionVideos(tx, collectionID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // IncrViewCount 播放量自增，用于详情页统计。

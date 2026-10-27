@@ -46,6 +46,12 @@ const router = createRouter({
           meta: { title: '观看' },
         },
         {
+          path: 'collection/:id',
+          name: 'collection',
+          component: () => import('@/views/CollectionView.vue'),
+          meta: { title: '合集' },
+        },
+        {
           path: 'trending',
           name: 'trending',
           component: () => import('@/views/TrendingView.vue'),
@@ -98,6 +104,12 @@ const router = createRouter({
           name: 'admin-videos',
           component: () => import('@/views/AdminVideosView.vue'),
           meta: { title: '视频管理', requiresAuth: true, requiresAdmin: true },
+        },
+        {
+          path: 'admin/collections',
+          name: 'admin-collections',
+          component: () => import('@/views/AdminCollectionsView.vue'),
+          meta: { title: '合集管理', requiresAuth: true, requiresAdmin: true },
         },
         {
           path: 'admin/comments',

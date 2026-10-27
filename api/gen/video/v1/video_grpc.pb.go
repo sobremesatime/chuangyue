@@ -19,19 +19,30 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	VideoService_GetVideo_FullMethodName              = "/video.v1.VideoService/GetVideo"
-	VideoService_GetVideos_FullMethodName             = "/video.v1.VideoService/GetVideos"
-	VideoService_GetVideoInfos_FullMethodName         = "/video.v1.VideoService/GetVideoInfos"
-	VideoService_ListFeedCandidates_FullMethodName    = "/video.v1.VideoService/ListFeedCandidates"
-	VideoService_ListVideos_FullMethodName            = "/video.v1.VideoService/ListVideos"
-	VideoService_IncrViewCount_FullMethodName         = "/video.v1.VideoService/IncrViewCount"
-	VideoService_GetTranscodeState_FullMethodName     = "/video.v1.VideoService/GetTranscodeState"
-	VideoService_ReportTranscodeResult_FullMethodName = "/video.v1.VideoService/ReportTranscodeResult"
-	VideoService_AdminListVideos_FullMethodName       = "/video.v1.VideoService/AdminListVideos"
-	VideoService_UpdateVideoStatus_FullMethodName     = "/video.v1.VideoService/UpdateVideoStatus"
-	VideoService_RetryTranscode_FullMethodName        = "/video.v1.VideoService/RetryTranscode"
-	VideoService_UpdateVideo_FullMethodName           = "/video.v1.VideoService/UpdateVideo"
-	VideoService_DeleteVideo_FullMethodName           = "/video.v1.VideoService/DeleteVideo"
+	VideoService_GetVideo_FullMethodName                = "/video.v1.VideoService/GetVideo"
+	VideoService_GetVideos_FullMethodName               = "/video.v1.VideoService/GetVideos"
+	VideoService_GetVideoInfos_FullMethodName           = "/video.v1.VideoService/GetVideoInfos"
+	VideoService_ListFeedCandidates_FullMethodName      = "/video.v1.VideoService/ListFeedCandidates"
+	VideoService_ListVideos_FullMethodName              = "/video.v1.VideoService/ListVideos"
+	VideoService_IncrViewCount_FullMethodName           = "/video.v1.VideoService/IncrViewCount"
+	VideoService_GetTranscodeState_FullMethodName       = "/video.v1.VideoService/GetTranscodeState"
+	VideoService_ReportTranscodeResult_FullMethodName   = "/video.v1.VideoService/ReportTranscodeResult"
+	VideoService_AdminListVideos_FullMethodName         = "/video.v1.VideoService/AdminListVideos"
+	VideoService_UpdateVideoStatus_FullMethodName       = "/video.v1.VideoService/UpdateVideoStatus"
+	VideoService_RetryTranscode_FullMethodName          = "/video.v1.VideoService/RetryTranscode"
+	VideoService_UpdateVideo_FullMethodName             = "/video.v1.VideoService/UpdateVideo"
+	VideoService_DeleteVideo_FullMethodName             = "/video.v1.VideoService/DeleteVideo"
+	VideoService_GetCollection_FullMethodName           = "/video.v1.VideoService/GetCollection"
+	VideoService_GetCollectionByVideo_FullMethodName    = "/video.v1.VideoService/GetCollectionByVideo"
+	VideoService_ListCollections_FullMethodName         = "/video.v1.VideoService/ListCollections"
+	VideoService_AdminListCollections_FullMethodName    = "/video.v1.VideoService/AdminListCollections"
+	VideoService_AdminGetCollection_FullMethodName      = "/video.v1.VideoService/AdminGetCollection"
+	VideoService_CreateCollection_FullMethodName        = "/video.v1.VideoService/CreateCollection"
+	VideoService_UpdateCollection_FullMethodName        = "/video.v1.VideoService/UpdateCollection"
+	VideoService_DeleteCollection_FullMethodName        = "/video.v1.VideoService/DeleteCollection"
+	VideoService_AddCollectionVideos_FullMethodName     = "/video.v1.VideoService/AddCollectionVideos"
+	VideoService_RemoveCollectionVideo_FullMethodName   = "/video.v1.VideoService/RemoveCollectionVideo"
+	VideoService_ReorderCollectionVideos_FullMethodName = "/video.v1.VideoService/ReorderCollectionVideos"
 )
 
 // VideoServiceClient is the client API for VideoService service.
@@ -67,6 +78,29 @@ type VideoServiceClient interface {
 	UpdateVideo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UpdateVideoFrame, UpdateVideoResponse], error)
 	// DeleteVideo 删除视频及其源文件与封面。
 	DeleteVideo(ctx context.Context, in *DeleteVideoRequest, opts ...grpc.CallOption) (*DeleteVideoResponse, error)
+	// ---- 合集（跨视频的播放列表）----
+	// GetCollection 读取公开合集详情与有序播放列表；草稿合集在前台等同不存在。
+	GetCollection(ctx context.Context, in *GetCollectionRequest, opts ...grpc.CallOption) (*GetCollectionResponse, error)
+	// GetCollectionByVideo 反查视频所属的公开合集并给出其序号。
+	GetCollectionByVideo(ctx context.Context, in *GetCollectionByVideoRequest, opts ...grpc.CallOption) (*GetCollectionByVideoResponse, error)
+	// ListCollections 公开合集列表（仅 status=1）。
+	ListCollections(ctx context.Context, in *ListCollectionsRequest, opts ...grpc.CallOption) (*ListCollectionsResponse, error)
+	// AdminListCollections 管理端合集列表（含草稿）。
+	AdminListCollections(ctx context.Context, in *AdminListCollectionsRequest, opts ...grpc.CallOption) (*AdminListCollectionsResponse, error)
+	// AdminGetCollection 管理端合集详情：含草稿合集与未上架视频，供编排排序使用。
+	AdminGetCollection(ctx context.Context, in *AdminGetCollectionRequest, opts ...grpc.CallOption) (*AdminGetCollectionResponse, error)
+	// CreateCollection 新建合集，创建者身份由 metadata 透传。
+	CreateCollection(ctx context.Context, in *CreateCollectionRequest, opts ...grpc.CallOption) (*CreateCollectionResponse, error)
+	// UpdateCollection 编辑合集（标题 / 简介 / 封面 / 状态）。
+	UpdateCollection(ctx context.Context, in *UpdateCollectionRequest, opts ...grpc.CallOption) (*UpdateCollectionResponse, error)
+	// DeleteCollection 删除合集及其全部关联行（不删视频本身）。
+	DeleteCollection(ctx context.Context, in *DeleteCollectionRequest, opts ...grpc.CallOption) (*DeleteCollectionResponse, error)
+	// AddCollectionVideos 按传入顺序追加视频到合集末尾，重复添加忽略。
+	AddCollectionVideos(ctx context.Context, in *AddCollectionVideosRequest, opts ...grpc.CallOption) (*AddCollectionVideosResponse, error)
+	// RemoveCollectionVideo 从合集移出一个视频（幂等）。
+	RemoveCollectionVideo(ctx context.Context, in *RemoveCollectionVideoRequest, opts ...grpc.CallOption) (*RemoveCollectionVideoResponse, error)
+	// ReorderCollectionVideos 按传入的完整顺序重写播放顺序。
+	ReorderCollectionVideos(ctx context.Context, in *ReorderCollectionVideosRequest, opts ...grpc.CallOption) (*ReorderCollectionVideosResponse, error)
 }
 
 type videoServiceClient struct {
@@ -210,6 +244,116 @@ func (c *videoServiceClient) DeleteVideo(ctx context.Context, in *DeleteVideoReq
 	return out, nil
 }
 
+func (c *videoServiceClient) GetCollection(ctx context.Context, in *GetCollectionRequest, opts ...grpc.CallOption) (*GetCollectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCollectionResponse)
+	err := c.cc.Invoke(ctx, VideoService_GetCollection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) GetCollectionByVideo(ctx context.Context, in *GetCollectionByVideoRequest, opts ...grpc.CallOption) (*GetCollectionByVideoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCollectionByVideoResponse)
+	err := c.cc.Invoke(ctx, VideoService_GetCollectionByVideo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) ListCollections(ctx context.Context, in *ListCollectionsRequest, opts ...grpc.CallOption) (*ListCollectionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCollectionsResponse)
+	err := c.cc.Invoke(ctx, VideoService_ListCollections_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) AdminListCollections(ctx context.Context, in *AdminListCollectionsRequest, opts ...grpc.CallOption) (*AdminListCollectionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminListCollectionsResponse)
+	err := c.cc.Invoke(ctx, VideoService_AdminListCollections_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) AdminGetCollection(ctx context.Context, in *AdminGetCollectionRequest, opts ...grpc.CallOption) (*AdminGetCollectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminGetCollectionResponse)
+	err := c.cc.Invoke(ctx, VideoService_AdminGetCollection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) CreateCollection(ctx context.Context, in *CreateCollectionRequest, opts ...grpc.CallOption) (*CreateCollectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateCollectionResponse)
+	err := c.cc.Invoke(ctx, VideoService_CreateCollection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) UpdateCollection(ctx context.Context, in *UpdateCollectionRequest, opts ...grpc.CallOption) (*UpdateCollectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateCollectionResponse)
+	err := c.cc.Invoke(ctx, VideoService_UpdateCollection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) DeleteCollection(ctx context.Context, in *DeleteCollectionRequest, opts ...grpc.CallOption) (*DeleteCollectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteCollectionResponse)
+	err := c.cc.Invoke(ctx, VideoService_DeleteCollection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) AddCollectionVideos(ctx context.Context, in *AddCollectionVideosRequest, opts ...grpc.CallOption) (*AddCollectionVideosResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddCollectionVideosResponse)
+	err := c.cc.Invoke(ctx, VideoService_AddCollectionVideos_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) RemoveCollectionVideo(ctx context.Context, in *RemoveCollectionVideoRequest, opts ...grpc.CallOption) (*RemoveCollectionVideoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveCollectionVideoResponse)
+	err := c.cc.Invoke(ctx, VideoService_RemoveCollectionVideo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *videoServiceClient) ReorderCollectionVideos(ctx context.Context, in *ReorderCollectionVideosRequest, opts ...grpc.CallOption) (*ReorderCollectionVideosResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReorderCollectionVideosResponse)
+	err := c.cc.Invoke(ctx, VideoService_ReorderCollectionVideos_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VideoServiceServer is the server API for VideoService service.
 // All implementations must embed UnimplementedVideoServiceServer
 // for forward compatibility.
@@ -243,6 +387,29 @@ type VideoServiceServer interface {
 	UpdateVideo(grpc.ClientStreamingServer[UpdateVideoFrame, UpdateVideoResponse]) error
 	// DeleteVideo 删除视频及其源文件与封面。
 	DeleteVideo(context.Context, *DeleteVideoRequest) (*DeleteVideoResponse, error)
+	// ---- 合集（跨视频的播放列表）----
+	// GetCollection 读取公开合集详情与有序播放列表；草稿合集在前台等同不存在。
+	GetCollection(context.Context, *GetCollectionRequest) (*GetCollectionResponse, error)
+	// GetCollectionByVideo 反查视频所属的公开合集并给出其序号。
+	GetCollectionByVideo(context.Context, *GetCollectionByVideoRequest) (*GetCollectionByVideoResponse, error)
+	// ListCollections 公开合集列表（仅 status=1）。
+	ListCollections(context.Context, *ListCollectionsRequest) (*ListCollectionsResponse, error)
+	// AdminListCollections 管理端合集列表（含草稿）。
+	AdminListCollections(context.Context, *AdminListCollectionsRequest) (*AdminListCollectionsResponse, error)
+	// AdminGetCollection 管理端合集详情：含草稿合集与未上架视频，供编排排序使用。
+	AdminGetCollection(context.Context, *AdminGetCollectionRequest) (*AdminGetCollectionResponse, error)
+	// CreateCollection 新建合集，创建者身份由 metadata 透传。
+	CreateCollection(context.Context, *CreateCollectionRequest) (*CreateCollectionResponse, error)
+	// UpdateCollection 编辑合集（标题 / 简介 / 封面 / 状态）。
+	UpdateCollection(context.Context, *UpdateCollectionRequest) (*UpdateCollectionResponse, error)
+	// DeleteCollection 删除合集及其全部关联行（不删视频本身）。
+	DeleteCollection(context.Context, *DeleteCollectionRequest) (*DeleteCollectionResponse, error)
+	// AddCollectionVideos 按传入顺序追加视频到合集末尾，重复添加忽略。
+	AddCollectionVideos(context.Context, *AddCollectionVideosRequest) (*AddCollectionVideosResponse, error)
+	// RemoveCollectionVideo 从合集移出一个视频（幂等）。
+	RemoveCollectionVideo(context.Context, *RemoveCollectionVideoRequest) (*RemoveCollectionVideoResponse, error)
+	// ReorderCollectionVideos 按传入的完整顺序重写播放顺序。
+	ReorderCollectionVideos(context.Context, *ReorderCollectionVideosRequest) (*ReorderCollectionVideosResponse, error)
 	mustEmbedUnimplementedVideoServiceServer()
 }
 
@@ -291,6 +458,39 @@ func (UnimplementedVideoServiceServer) UpdateVideo(grpc.ClientStreamingServer[Up
 }
 func (UnimplementedVideoServiceServer) DeleteVideo(context.Context, *DeleteVideoRequest) (*DeleteVideoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteVideo not implemented")
+}
+func (UnimplementedVideoServiceServer) GetCollection(context.Context, *GetCollectionRequest) (*GetCollectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCollection not implemented")
+}
+func (UnimplementedVideoServiceServer) GetCollectionByVideo(context.Context, *GetCollectionByVideoRequest) (*GetCollectionByVideoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCollectionByVideo not implemented")
+}
+func (UnimplementedVideoServiceServer) ListCollections(context.Context, *ListCollectionsRequest) (*ListCollectionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListCollections not implemented")
+}
+func (UnimplementedVideoServiceServer) AdminListCollections(context.Context, *AdminListCollectionsRequest) (*AdminListCollectionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdminListCollections not implemented")
+}
+func (UnimplementedVideoServiceServer) AdminGetCollection(context.Context, *AdminGetCollectionRequest) (*AdminGetCollectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdminGetCollection not implemented")
+}
+func (UnimplementedVideoServiceServer) CreateCollection(context.Context, *CreateCollectionRequest) (*CreateCollectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateCollection not implemented")
+}
+func (UnimplementedVideoServiceServer) UpdateCollection(context.Context, *UpdateCollectionRequest) (*UpdateCollectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateCollection not implemented")
+}
+func (UnimplementedVideoServiceServer) DeleteCollection(context.Context, *DeleteCollectionRequest) (*DeleteCollectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteCollection not implemented")
+}
+func (UnimplementedVideoServiceServer) AddCollectionVideos(context.Context, *AddCollectionVideosRequest) (*AddCollectionVideosResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddCollectionVideos not implemented")
+}
+func (UnimplementedVideoServiceServer) RemoveCollectionVideo(context.Context, *RemoveCollectionVideoRequest) (*RemoveCollectionVideoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveCollectionVideo not implemented")
+}
+func (UnimplementedVideoServiceServer) ReorderCollectionVideos(context.Context, *ReorderCollectionVideosRequest) (*ReorderCollectionVideosResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReorderCollectionVideos not implemented")
 }
 func (UnimplementedVideoServiceServer) mustEmbedUnimplementedVideoServiceServer() {}
 func (UnimplementedVideoServiceServer) testEmbeddedByValue()                      {}
@@ -536,6 +736,204 @@ func _VideoService_DeleteVideo_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VideoService_GetCollection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCollectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).GetCollection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_GetCollection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).GetCollection(ctx, req.(*GetCollectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_GetCollectionByVideo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCollectionByVideoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).GetCollectionByVideo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_GetCollectionByVideo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).GetCollectionByVideo(ctx, req.(*GetCollectionByVideoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_ListCollections_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCollectionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).ListCollections(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_ListCollections_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).ListCollections(ctx, req.(*ListCollectionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_AdminListCollections_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminListCollectionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).AdminListCollections(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_AdminListCollections_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).AdminListCollections(ctx, req.(*AdminListCollectionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_AdminGetCollection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminGetCollectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).AdminGetCollection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_AdminGetCollection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).AdminGetCollection(ctx, req.(*AdminGetCollectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_CreateCollection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateCollectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).CreateCollection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_CreateCollection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).CreateCollection(ctx, req.(*CreateCollectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_UpdateCollection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateCollectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).UpdateCollection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_UpdateCollection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).UpdateCollection(ctx, req.(*UpdateCollectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_DeleteCollection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteCollectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).DeleteCollection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_DeleteCollection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).DeleteCollection(ctx, req.(*DeleteCollectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_AddCollectionVideos_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddCollectionVideosRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).AddCollectionVideos(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_AddCollectionVideos_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).AddCollectionVideos(ctx, req.(*AddCollectionVideosRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_RemoveCollectionVideo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveCollectionVideoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).RemoveCollectionVideo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_RemoveCollectionVideo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).RemoveCollectionVideo(ctx, req.(*RemoveCollectionVideoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VideoService_ReorderCollectionVideos_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReorderCollectionVideosRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).ReorderCollectionVideos(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_ReorderCollectionVideos_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).ReorderCollectionVideos(ctx, req.(*ReorderCollectionVideosRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VideoService_ServiceDesc is the grpc.ServiceDesc for VideoService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -590,6 +988,50 @@ var VideoService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteVideo",
 			Handler:    _VideoService_DeleteVideo_Handler,
+		},
+		{
+			MethodName: "GetCollection",
+			Handler:    _VideoService_GetCollection_Handler,
+		},
+		{
+			MethodName: "GetCollectionByVideo",
+			Handler:    _VideoService_GetCollectionByVideo_Handler,
+		},
+		{
+			MethodName: "ListCollections",
+			Handler:    _VideoService_ListCollections_Handler,
+		},
+		{
+			MethodName: "AdminListCollections",
+			Handler:    _VideoService_AdminListCollections_Handler,
+		},
+		{
+			MethodName: "AdminGetCollection",
+			Handler:    _VideoService_AdminGetCollection_Handler,
+		},
+		{
+			MethodName: "CreateCollection",
+			Handler:    _VideoService_CreateCollection_Handler,
+		},
+		{
+			MethodName: "UpdateCollection",
+			Handler:    _VideoService_UpdateCollection_Handler,
+		},
+		{
+			MethodName: "DeleteCollection",
+			Handler:    _VideoService_DeleteCollection_Handler,
+		},
+		{
+			MethodName: "AddCollectionVideos",
+			Handler:    _VideoService_AddCollectionVideos_Handler,
+		},
+		{
+			MethodName: "RemoveCollectionVideo",
+			Handler:    _VideoService_RemoveCollectionVideo_Handler,
+		},
+		{
+			MethodName: "ReorderCollectionVideos",
+			Handler:    _VideoService_ReorderCollectionVideos_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

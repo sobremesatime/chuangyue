@@ -134,6 +134,19 @@ export interface PageResult<T> {
   page_size: number
 }
 
+/**
+ * 合集分页结果。
+ *
+ * 契约里合集的列表字段叫 items，与通用 PageResult 的 list 不同；
+ * 这里单独声明，避免在页面里做「result.items ?? result.list」这类兼容分支。
+ */
+export interface CollectionPage<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
 /** 角色常量，与后端 internal/user/model 保持一致 */
 export const ROLE_USER = 0
 export const ROLE_ADMIN = 1
@@ -147,6 +160,62 @@ export const VIDEO_STATUS_TRANSCODING = 0
 export const VIDEO_STATUS_PUBLISHED = 1
 export const VIDEO_STATUS_OFFLINE = 2
 export const VIDEO_STATUS_FAILED = 3
+
+/**
+ * 合集相关类型。
+ *
+ * 集合由后端独立实现，尚未写进 OpenAPI 契约文件，这里先手写；
+ * 字段严格按前后端约定（JSON snake_case、ID 为字符串），契约更新后可改为生成。
+ */
+
+/** 某个视频所属的合集：观看页右侧「合集」卡片用，current_index 为当前视频在合集内的序号 */
+export interface VideoCollectionRef {
+  id: string
+  title: string
+  cover_url: string
+  video_count: number
+  current_index: number
+}
+
+/** 公开合集列表项 */
+export interface CollectionListItem {
+  id: string
+  title: string
+  cover_url: string
+  video_count: number
+  created_at: string
+}
+
+/** 合集详情：videos 的字段与视频详情接口一致 */
+export interface CollectionDetail extends CollectionListItem {
+  description: string
+  videos: Video[]
+}
+
+/** 管理端合集：比公开列表多出简介与状态（含草稿） */
+export interface AdminCollection extends CollectionListItem {
+  description: string
+  status: number
+}
+
+/** 新建合集请求体 */
+export interface CreateCollectionPayload {
+  title: string
+  description?: string
+  cover_url?: string
+}
+
+/** 更新合集请求体：字段均可选，只传需要改的 */
+export interface UpdateCollectionPayload {
+  title?: string
+  description?: string
+  cover_url?: string
+  status?: number
+}
+
+/** 合集状态常量：0 草稿，1 已发布 */
+export const COLLECTION_STATUS_DRAFT = 0
+export const COLLECTION_STATUS_PUBLISHED = 1
 
 /** 举报对象类型，与后端 internal/report/model 保持一致 */
 export const REPORT_TARGET_VIDEO = 1

@@ -23,6 +23,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 
+import { listVideoCollections } from '@/api/collection'
 import { createComment, deleteComment, listComments, listReplies, setCommentLike } from '@/api/comment'
 import { createDanmaku, deleteDanmaku, listDanmaku } from '@/api/danmaku'
 import {
@@ -47,6 +48,7 @@ import {
   type Comment,
   type Danmaku,
   type Video,
+  type VideoCollectionRef,
 } from '@/types/api'
 import { formatCount, formatDuration, formatRelativeDate } from '@/utils/format'
 
@@ -253,6 +255,8 @@ const queueStore = usePlayerQueueStore()
 const video = ref<Video | null>(null)
 const loading = ref(true)
 const relatedLoading = ref(true)
+/** 当前视频所属的合集；接口失败或为空时整块卡片不渲染 */
+const videoCollections = ref<VideoCollectionRef[]>([])
 const error = ref('')
 const playerReady = ref(false)
 const descriptionExpanded = ref(false)
@@ -390,6 +394,7 @@ async function load(): Promise<void> {
   actionError.value = ''
   resumeAt.value = 0
   resumed = false
+  videoCollections.value = []
 
   // 播放器状态跟随视频切换复位：新视频要重新走一次自动播放
   autoplayTried = false
@@ -425,6 +430,7 @@ async function load(): Promise<void> {
     document.title = `${result.title} · 窗月`
     void loadInteraction()
     void loadRelated(result)
+    void loadCollections()
   } catch (e) {
     error.value = toErrorMessage(e)
   } finally {
@@ -1042,6 +1048,20 @@ async function reportWatch(progress: number): Promise<void> {
     await reportHistory(videoId.value, progress)
   } catch {
     // 观看历史不是关键路径，失败不打断观看
+  }
+}
+
+/**
+ * 拉取当前视频所属的合集。
+ *
+ * 合集信息是观看页的附加信息：接口失败时静默隐藏整块卡片，
+ * 不弹错误提示，也不影响播放器与队列的正常使用。
+ */
+async function loadCollections(): Promise<void> {
+  try {
+    videoCollections.value = await listVideoCollections(videoId.value)
+  } catch {
+    videoCollections.value = []
   }
 }
 
@@ -2551,6 +2571,51 @@ onBeforeUnmount(() => {
       </div>
 
       <aside class="detail__side">
+        <!-- 合集卡片：只在接口返回非空时出现，当前视频所在的集数直接标在卡片上 -->
+        <section
+          v-if="videoCollections.length > 0"
+          class="side-collections"
+          aria-labelledby="side-collections-title"
+        >
+          <h2
+            id="side-collections-title"
+            class="cy-subtitle detail__side-title side-collections__title"
+          >
+            合集
+          </h2>
+
+          <RouterLink
+            v-for="collection in videoCollections"
+            :key="collection.id"
+            class="side-collection"
+            :to="{ name: 'collection', params: { id: collection.id } }"
+          >
+            <div class="side-collection__cover">
+              <img
+                v-if="collection.cover_url"
+                class="side-collection__img"
+                :src="collection.cover_url"
+                :alt="collection.title"
+                loading="lazy"
+              />
+              <span v-else class="side-collection__fallback" aria-hidden="true">
+                {{ initialOf(collection.title) }}
+              </span>
+            </div>
+
+            <div class="side-collection__info">
+              <h3 class="side-collection__name cy-clamp-2">{{ collection.title }}</h3>
+              <p class="cy-caption">
+                共 <span class="cy-num">{{ collection.video_count }}</span> 个视频
+              </p>
+              <span class="side-collection__index">
+                <AppIcon name="play" :size="12" />
+                第 <span class="cy-num">{{ collection.current_index }}</span> 集
+              </span>
+            </div>
+          </RouterLink>
+        </section>
+
         <div class="detail__side-head">
           <h2 class="cy-subtitle detail__side-title">播放队列</h2>
           <button
@@ -3390,6 +3455,85 @@ onBeforeUnmount(() => {
   gap: var(--cy-space-3);
 }
 
+/* 合集卡片：与播放队列共用侧栏宽度，封面比队列项略窄，给集数徽标留出空间 */
+.side-collections {
+  margin-bottom: var(--cy-space-5);
+}
+
+.side-collections__title {
+  margin-bottom: var(--cy-space-3);
+}
+
+.side-collection {
+  display: flex;
+  gap: var(--cy-space-3);
+  padding: var(--cy-space-1);
+  border-radius: var(--cy-radius-sm);
+  transition: background-color var(--cy-dur-fast) var(--cy-ease);
+}
+
+.side-collection + .side-collection {
+  margin-top: var(--cy-space-2);
+}
+
+.side-collection:hover {
+  background: var(--cy-surface-2);
+}
+
+.side-collection__cover {
+  position: relative;
+  flex-shrink: 0;
+  width: 120px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--cy-radius-sm);
+  overflow: hidden;
+  background: var(--cy-surface-2);
+}
+
+.side-collection__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.side-collection__fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: var(--cy-primary);
+  color: var(--cy-on-primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.side-collection__info {
+  min-width: 0;
+}
+
+.side-collection__name {
+  color: var(--cy-text);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+/* 集数徽标：浅紫底强调「当前视频在这里」，与队列的「正在播放」呼应 */
+.side-collection__index {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  margin-top: var(--cy-space-1);
+  padding: 0 var(--cy-space-2);
+  border-radius: var(--cy-radius-full);
+  background: var(--cy-primary-soft);
+  color: var(--cy-primary-strong);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
 .detail__side-head {
   display: flex;
   align-items: center;
@@ -3594,6 +3738,10 @@ onBeforeUnmount(() => {
 @media (max-width: 599px) {
   .related__cover {
     width: 128px;
+  }
+
+  .side-collection__cover {
+    width: 104px;
   }
 }
 

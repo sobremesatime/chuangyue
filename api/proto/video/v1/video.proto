@@ -59,6 +59,39 @@ message UploadedPart {
   int64  size        = 3;
 }
 
+// ============================================================
+// 合集（跨视频的播放列表）
+// ============================================================
+
+// CollectionInfo 是合集的完整对外信息。
+//
+// cover_url 为空时，读取侧（GetCollection / ListCollections / GetCollectionByVideo）
+// 会用合集内第一个「已上架视频」的封面兜底，但不会写库；
+// 管理端写操作的响应返回库内原值，便于管理员知道封面确实为空。
+message CollectionInfo {
+  int64  id          = 1;
+  string title       = 2;
+  string description = 3;
+  string cover_url   = 4;
+  int64  uploader_id = 5;
+  // status：0 草稿（仅管理端可见）、1 公开。
+  int32  status      = 6;
+  // video_count 是合集内视频总数（含未上架），由写入路径维护的冗余计数。
+  int64  video_count = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// CollectionBrief 是「视频属于哪些合集」场景的精简信息。
+message CollectionBrief {
+  int64  id    = 1;
+  string title = 2;
+  string cover_url = 3;
+  int64  video_count = 4;
+  // current_index 是目标视频在合集公开播放列表中的 1 基序号；
+  // 0 表示该视频不在公开列表中（例如尚未上架）。
+  int32  current_index = 5;
+}
+
 // ReportInfo 是对外暴露的举报信息。
 message ReportInfo {
   int64  id                = 1;
@@ -404,6 +437,139 @@ message HandleReportResponse {
   ReportInfo report = 1;
 }
 
+// ============================================================
+// 合集（跨视频的播放列表）契约
+// ============================================================
+//
+// 合集写操作（Create / Update / Delete / Add / Remove / Reorder）的身份一律走
+// gRPC metadata 透传（与 UploadVideo 相同），不放进 message——上传者这类字段
+// 本质不是业务数据，散在契约里容易漏带。
+
+// GetCollection 读取公开合集详情：合集信息 + 有序播放列表（仅已上架视频）。
+message GetCollectionRequest {
+  int64 id = 1;
+}
+
+message GetCollectionResponse {
+  CollectionInfo collection = 1;
+  repeated VideoInfo videos = 2;
+}
+
+// AdminGetCollection 读取任意状态的合集详情，并返回其中全部视频（含未上架、含草稿合集）。
+//
+// 与 GetCollection 分开的原因：公开读会过滤草稿与未上架视频，管理端编排却必须看到
+// 自己刚加进去、仍在转码的视频，否则排序面板里的顺序与库内真实顺序对不上。
+message AdminGetCollectionRequest {
+  int64 id = 1;
+}
+
+message AdminGetCollectionResponse {
+  CollectionInfo collection = 1;
+  repeated VideoInfo videos = 2;
+}
+
+// GetCollectionByVideo 反查视频所属的公开合集，并给出它在各合集内的序号。
+message GetCollectionByVideoRequest {
+  int64 video_id = 1;
+}
+
+message GetCollectionByVideoResponse {
+  repeated CollectionBrief collections = 1;
+}
+
+// ListCollections 公开合集列表，仅返回 status=1。
+message ListCollectionsRequest {
+  int32 page      = 1;
+  int32 page_size = 2;
+}
+
+message ListCollectionsResponse {
+  repeated CollectionInfo collections = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+// AdminListCollections 管理端合集列表，含草稿。
+message AdminListCollectionsRequest {
+  int32 page      = 1;
+  int32 page_size = 2;
+}
+
+message AdminListCollectionsResponse {
+  repeated CollectionInfo collections = 1;
+  int64 total     = 2;
+  int32 page      = 3;
+  int32 page_size = 4;
+}
+
+// CreateCollection 新建合集；创建者身份经 metadata 透传。
+message CreateCollectionRequest {
+  string title       = 1;
+  string description = 2;
+  string cover_url   = 3;
+}
+
+message CreateCollectionResponse {
+  CollectionInfo collection = 1;
+}
+
+// UpdateCollection 编辑合集。
+//
+// title / description / cover_url 用 optional 区分「未传」与「传了空值」：
+// 简介与封面允许被清空成空串，而未传表示不修改；status 只接受 0 / 1。
+message UpdateCollectionRequest {
+  int64           id          = 1;
+  optional string title       = 2;
+  optional string description = 3;
+  optional string cover_url   = 4;
+  optional int32  status      = 5;
+}
+
+message UpdateCollectionResponse {
+  CollectionInfo collection = 1;
+}
+
+message DeleteCollectionRequest {
+  int64 id = 1;
+}
+
+// DeleteCollectionResponse 回传被删除合集的 ID（字符串形式，规避 JS 精度问题）。
+message DeleteCollectionResponse {
+  string id = 1;
+}
+
+// AddCollectionVideos 按传入顺序把视频追加到合集末尾（重复添加忽略）。
+message AddCollectionVideosRequest {
+  int64           collection_id = 1;
+  repeated int64  video_ids     = 2;
+}
+
+message AddCollectionVideosResponse {
+  CollectionInfo collection = 1;
+}
+
+message RemoveCollectionVideoRequest {
+  int64 collection_id = 1;
+  int64 video_id      = 2;
+}
+
+message RemoveCollectionVideoResponse {
+  CollectionInfo collection = 1;
+}
+
+// ReorderCollectionVideos 按传入的完整顺序重写播放顺序。
+//
+// video_ids 必须是合集内现有视频的一个排列，集合不一致时返回参数错误。
+message ReorderCollectionVideosRequest {
+  int64           collection_id = 1;
+  repeated int64  video_ids     = 2;
+}
+
+message ReorderCollectionVideosResponse {
+  CollectionInfo collection = 1;
+}
+
 // VideoService 供其它服务读取视频信息，并承载管理端不含字节体的 CRUD。
 service VideoService {
   // GetVideo 返回单个视频的完整信息，供网关详情页使用。
@@ -435,6 +601,30 @@ service VideoService {
   rpc UpdateVideo(stream UpdateVideoFrame) returns (UpdateVideoResponse);
   // DeleteVideo 删除视频及其源文件与封面。
   rpc DeleteVideo(DeleteVideoRequest) returns (DeleteVideoResponse);
+
+  // ---- 合集（跨视频的播放列表）----
+  // GetCollection 读取公开合集详情与有序播放列表；草稿合集在前台等同不存在。
+  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
+  // GetCollectionByVideo 反查视频所属的公开合集并给出其序号。
+  rpc GetCollectionByVideo(GetCollectionByVideoRequest) returns (GetCollectionByVideoResponse);
+  // ListCollections 公开合集列表（仅 status=1）。
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  // AdminListCollections 管理端合集列表（含草稿）。
+  rpc AdminListCollections(AdminListCollectionsRequest) returns (AdminListCollectionsResponse);
+  // AdminGetCollection 管理端合集详情：含草稿合集与未上架视频，供编排排序使用。
+  rpc AdminGetCollection(AdminGetCollectionRequest) returns (AdminGetCollectionResponse);
+  // CreateCollection 新建合集，创建者身份由 metadata 透传。
+  rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
+  // UpdateCollection 编辑合集（标题 / 简介 / 封面 / 状态）。
+  rpc UpdateCollection(UpdateCollectionRequest) returns (UpdateCollectionResponse);
+  // DeleteCollection 删除合集及其全部关联行（不删视频本身）。
+  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+  // AddCollectionVideos 按传入顺序追加视频到合集末尾，重复添加忽略。
+  rpc AddCollectionVideos(AddCollectionVideosRequest) returns (AddCollectionVideosResponse);
+  // RemoveCollectionVideo 从合集移出一个视频（幂等）。
+  rpc RemoveCollectionVideo(RemoveCollectionVideoRequest) returns (RemoveCollectionVideoResponse);
+  // ReorderCollectionVideos 按传入的完整顺序重写播放顺序。
+  rpc ReorderCollectionVideos(ReorderCollectionVideosRequest) returns (ReorderCollectionVideosResponse);
 }
 
 // UploadService 承载单文件上传与分片上传的完整生命周期。

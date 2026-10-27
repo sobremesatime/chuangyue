@@ -28,6 +28,7 @@ interface NavItem {
     | 'clock'
     | 'later'
     | 'grid'
+    | 'playlist'
     | 'upload'
     | 'comment'
     | 'danmaku'
@@ -70,6 +71,7 @@ const groups = computed<NavGroup[]>(() => {
       ready: [
         { label: '投稿', icon: 'upload', to: { name: 'admin-upload' } },
         { label: '视频管理', icon: 'grid', to: { name: 'admin-videos' } },
+        { label: '合集管理', icon: 'playlist', to: { name: 'admin-collections' } },
         { label: '评论管理', icon: 'comment', to: { name: 'admin-comments' } },
         { label: '弹幕管理', icon: 'danmaku', to: { name: 'admin-danmaku' } },
         { label: '举报处理', icon: 'report', to: { name: 'admin-reports' } },

@@ -117,6 +117,10 @@ func New(cfg *config.Config, limits Limiters, authClient userv1.AuthServiceClien
 	// 网关不再持有视频仓储与存储。
 	videoReadHandler := gatewayhandler.NewVideoReadHandler(videoClient)
 	videoAdminHandler := gatewayhandler.NewVideoAdminHandler(videoClient)
+	// 合集（跨视频的播放列表）：公开读与管理端编排也都经视频服务 gRPC，
+	// 网关不持有合集库；封面兜底、可见性过滤都收敛在服务端。
+	collectionReadHandler := gatewayhandler.NewCollectionReadHandler(videoClient)
+	collectionAdminHandler := gatewayhandler.NewCollectionAdminHandler(videoClient)
 	uploadHandler := gatewayhandler.NewUploadHandler(uploadClient)
 	// 互动域已全量切到 gRPC：评论 / 弹幕 / 视频互动 / 通知都由网关翻译成对互动服务的调用，
 	// 网关不再持有互动仓储与 MySQL，用户展示信息由互动服务内部经 user gRPC 补全。
@@ -163,6 +167,12 @@ func New(cfg *config.Config, limits Limiters, authClient userv1.AuthServiceClien
 		// 视频浏览：无需登录，经视频服务 gRPC 读取。
 		api.GET("/videos", videoReadHandler.List)
 		api.GET("/videos/:id", videoReadHandler.Detail)
+
+		// 视频合集：列表与详情公开（只含公开合集与已上架视频），
+		// 「视频属于哪些合集」同样公开，供视频详情页渲染合集入口。
+		api.GET("/collections", collectionReadHandler.List)
+		api.GET("/collections/:id", collectionReadHandler.Detail)
+		api.GET("/videos/:id/collections", collectionReadHandler.ByVideo)
 
 		// 首页推荐流：公开（未登录按全局热度，登录按个性化），经推荐服务 gRPC 读取。
 		api.GET("/feed", middleware.AuthOptional(jwtMgr), feedHandler.Home)
@@ -226,6 +236,18 @@ func New(cfg *config.Config, limits Limiters, authClient userv1.AuthServiceClien
 			admin.POST("/videos/:id/transcode", videoAdminHandler.RetryTranscode)
 			admin.PUT("/videos/:id", videoAdminHandler.Update)
 			admin.DELETE("/videos/:id", videoAdminHandler.Delete)
+
+			// 合集编排：管理端列表（含草稿）、增删改与播放顺序维护。
+			// 路径与 /videos 各自独立，不会与上面的 /videos/:id 通配冲突。
+			admin.GET("/collections", collectionAdminHandler.AdminList)
+			// 编排面板要看到草稿合集与未上架视频的真实顺序，走管理端专用详情。
+			admin.GET("/collections/:id", collectionAdminHandler.AdminDetail)
+			admin.POST("/collections", collectionAdminHandler.Create)
+			admin.PUT("/collections/:id", collectionAdminHandler.Update)
+			admin.DELETE("/collections/:id", collectionAdminHandler.Delete)
+			admin.POST("/collections/:id/videos", collectionAdminHandler.AddVideos)
+			admin.DELETE("/collections/:id/videos/:videoId", collectionAdminHandler.RemoveVideo)
+			admin.PATCH("/collections/:id/order", collectionAdminHandler.Reorder)
 
 			// 内容治理：评论 / 弹幕的检索与删除，以及举报的处理。
 			admin.GET("/comments", commentHandler.AdminList)
