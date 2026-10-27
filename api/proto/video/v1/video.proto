@@ -81,15 +81,13 @@ message CollectionInfo {
   google.protobuf.Timestamp created_at = 8;
 }
 
-// CollectionBrief 是「视频属于哪些合集」场景的精简信息。
-message CollectionBrief {
-  int64  id    = 1;
-  string title = 2;
-  string cover_url = 3;
-  int64  video_count = 4;
-  // current_index 是目标视频在合集公开播放列表中的 1 基序号；
-  // 0 表示该视频不在公开列表中（例如尚未上架）。
-  int32  current_index = 5;
+// CollectionDetail 是合集的完整视图：合集信息 + 有序视频列表。
+//
+// 单独定义而不是复用 GetCollectionResponse：视频详情页需要把「合集 + 播放列表」
+// 作为一个整体返回（或整体为空），与「查询某个合集」的响应语义不同。
+message CollectionDetail {
+  CollectionInfo collection = 1;
+  repeated VideoInfo videos = 2;
 }
 
 // ReportInfo 是对外暴露的举报信息。
@@ -468,13 +466,17 @@ message AdminGetCollectionResponse {
   repeated VideoInfo videos = 2;
 }
 
-// GetCollectionByVideo 反查视频所属的公开合集，并给出它在各合集内的序号。
+// GetCollectionByVideo 返回视频所属的公开合集详情，并给出当前视频在可见列表中的序号。
 message GetCollectionByVideoRequest {
   int64 video_id = 1;
 }
 
 message GetCollectionByVideoResponse {
-  repeated CollectionBrief collections = 1;
+  // detail 为空表示该视频不属于任何公开合集，前端据此整块隐藏右侧合集面板。
+  CollectionDetail detail = 1;
+  // current_index 是当前视频在 detail.videos 中的序号（从 1 开始）；
+  // 0 表示当前视频不在可见列表中（例如已下架但合集仍公开）。
+  int32 current_index = 2;
 }
 
 // ListCollections 公开合集列表，仅返回 status=1。
@@ -540,6 +542,8 @@ message DeleteCollectionResponse {
 }
 
 // AddCollectionVideos 按传入顺序把视频追加到合集末尾（重复添加忽略）。
+//
+// 视频单归属：已属于其他合集的视频会被移出原合集，而不是同时出现在两个合集里。
 message AddCollectionVideosRequest {
   int64           collection_id = 1;
   repeated int64  video_ids     = 2;
@@ -605,7 +609,7 @@ service VideoService {
   // ---- 合集（跨视频的播放列表）----
   // GetCollection 读取公开合集详情与有序播放列表；草稿合集在前台等同不存在。
   rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
-  // GetCollectionByVideo 反查视频所属的公开合集并给出其序号。
+  // GetCollectionByVideo 返回视频所属的公开合集详情与当前视频的序号；无合集时 detail 为空。
   rpc GetCollectionByVideo(GetCollectionByVideoRequest) returns (GetCollectionByVideoResponse);
   // ListCollections 公开合集列表（仅 status=1）。
   rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);

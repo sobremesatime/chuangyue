@@ -13,7 +13,7 @@ import type {
   CollectionPage,
   CreateCollectionPayload,
   UpdateCollectionPayload,
-  VideoCollectionRef,
+  VideoCollectionContext,
 } from '@/types/api'
 
 export interface ListCollectionParams {
@@ -21,9 +21,9 @@ export interface ListCollectionParams {
   page_size?: number
 }
 
-/** 某个视频所属的合集（可能多个）：GET /videos/{id}/collections */
-export async function listVideoCollections(videoId: string): Promise<VideoCollectionRef[]> {
-  const { data } = await http.get<ApiEnvelope<VideoCollectionRef[]>>(
+/** 某个视频所属的合集（至多一个）与当前集号：GET /videos/{id}/collections */
+export async function getVideoCollection(videoId: string): Promise<VideoCollectionContext> {
+  const { data } = await http.get<ApiEnvelope<VideoCollectionContext>>(
     `/videos/${videoId}/collections`,
   )
   return data.data

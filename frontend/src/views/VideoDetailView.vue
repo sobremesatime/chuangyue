@@ -23,7 +23,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 
-import { listVideoCollections } from '@/api/collection'
+import { getVideoCollection } from '@/api/collection'
 import { createComment, deleteComment, listComments, listReplies, setCommentLike } from '@/api/comment'
 import { createDanmaku, deleteDanmaku, listDanmaku } from '@/api/danmaku'
 import {
@@ -45,10 +45,10 @@ import { usePlayerQueueStore } from '@/stores/playerQueue'
 import { useUserStore } from '@/stores/user'
 import {
   REPORT_TARGET_VIDEO,
+  type CollectionDetail,
   type Comment,
   type Danmaku,
   type Video,
-  type VideoCollectionRef,
 } from '@/types/api'
 import { formatCount, formatDuration, formatRelativeDate } from '@/utils/format'
 
@@ -255,8 +255,10 @@ const queueStore = usePlayerQueueStore()
 const video = ref<Video | null>(null)
 const loading = ref(true)
 const relatedLoading = ref(true)
-/** 当前视频所属的合集；接口失败或为空时整块卡片不渲染 */
-const videoCollections = ref<VideoCollectionRef[]>([])
+/** 当前视频所属的合集；接口失败或视频不属于任何合集时整块面板不渲染 */
+const videoCollection = ref<CollectionDetail | null>(null)
+/** 当前视频在合集可见列表中的 1 基序号，0 表示不在列表中（例如已下架） */
+const collectionIndex = ref(0)
 const error = ref('')
 const playerReady = ref(false)
 const descriptionExpanded = ref(false)
@@ -394,7 +396,8 @@ async function load(): Promise<void> {
   actionError.value = ''
   resumeAt.value = 0
   resumed = false
-  videoCollections.value = []
+  videoCollection.value = null
+  collectionIndex.value = 0
 
   // 播放器状态跟随视频切换复位：新视频要重新走一次自动播放
   autoplayTried = false
@@ -1052,16 +1055,61 @@ async function reportWatch(progress: number): Promise<void> {
 }
 
 /**
- * 拉取当前视频所属的合集。
+ * 拉取当前视频所属的合集与集号。
  *
- * 合集信息是观看页的附加信息：接口失败时静默隐藏整块卡片，
+ * 合集是观看页的附加信息：接口失败或视频不属于任何合集时静默隐藏整块面板，
  * 不弹错误提示，也不影响播放器与队列的正常使用。
  */
 async function loadCollections(): Promise<void> {
   try {
-    videoCollections.value = await listVideoCollections(videoId.value)
+    const result = await getVideoCollection(videoId.value)
+    videoCollection.value = result.collection
+    collectionIndex.value = result.current_index
   } catch {
-    videoCollections.value = []
+    videoCollection.value = null
+    collectionIndex.value = 0
+  }
+}
+
+/** 当前这一集不做跳转：同页导航会让播放器重新加载，失去「就在当前页」的意义 */
+function onEpisodeClick(event: MouseEvent, isCurrent: boolean): void {
+  if (isCurrent) {
+    event.preventDefault()
+  }
+}
+
+/**
+ * 控制条上的上一集 / 下一集目标。
+ *
+ * 只有视频属于合集、且确实存在相邻集时才返回 id：到边界时按钮置灰而不是隐藏，
+ * 让用户知道「这里还有切换能力，只是已经到头」。
+ */
+const prevEpisodeId = computed(() => {
+  const list = videoCollection.value?.videos
+  if (!list || collectionIndex.value <= 1) {
+    return ''
+  }
+  return list[collectionIndex.value - 2].id
+})
+
+const nextEpisodeId = computed(() => {
+  const list = videoCollection.value?.videos
+  if (!list || collectionIndex.value <= 0 || collectionIndex.value >= list.length) {
+    return ''
+  }
+  return list[collectionIndex.value].id
+})
+
+/** 切集统一走路由：播放器状态、评论、弹幕的重建都由 load() 负责，不在这里重复处理 */
+function playPrevEpisode(): void {
+  if (prevEpisodeId.value) {
+    void router.push({ name: 'video-detail', params: { id: prevEpisodeId.value } })
+  }
+}
+
+function playNextEpisode(): void {
+  if (nextEpisodeId.value) {
+    void router.push({ name: 'video-detail', params: { id: nextEpisodeId.value } })
   }
 }
 
@@ -1962,6 +2010,19 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="pc__bar">
+              <!-- 合集存在时才出现切集按钮：没有合集就没有「上一集」概念，不占位 -->
+              <button
+                v-if="videoCollection"
+                class="pc__btn pc__btn--skip"
+                type="button"
+                aria-label="上一集"
+                title="上一集"
+                :disabled="!prevEpisodeId"
+                @click="playPrevEpisode"
+              >
+                <AppIcon name="skip-prev" :size="20" />
+              </button>
+
               <button
                 class="pc__btn"
                 type="button"
@@ -1969,6 +2030,18 @@ onBeforeUnmount(() => {
                 @click="togglePlay"
               >
                 <AppIcon :name="playing ? 'pause' : 'play'" :size="22" />
+              </button>
+
+              <button
+                v-if="videoCollection"
+                class="pc__btn pc__btn--skip"
+                type="button"
+                aria-label="下一集"
+                title="下一集"
+                :disabled="!nextEpisodeId"
+                @click="playNextEpisode"
+              >
+                <AppIcon name="skip-next" :size="20" />
               </button>
 
               <span class="pc__time cy-num">
@@ -2571,49 +2644,45 @@ onBeforeUnmount(() => {
       </div>
 
       <aside class="detail__side">
-        <!-- 合集卡片：只在接口返回非空时出现，当前视频所在的集数直接标在卡片上 -->
+        <!-- 合集剧集列表：只在视频属于公开合集时出现，当前集高亮且不跳转 -->
         <section
-          v-if="videoCollections.length > 0"
-          class="side-collections"
-          aria-labelledby="side-collections-title"
+          v-if="videoCollection"
+          class="side-episodes"
+          aria-labelledby="side-episodes-title"
         >
-          <h2
-            id="side-collections-title"
-            class="cy-subtitle detail__side-title side-collections__title"
-          >
-            合集
-          </h2>
+          <div class="side-episodes__head">
+            <h2
+              id="side-episodes-title"
+              class="cy-subtitle detail__side-title side-episodes__title"
+            >
+              {{ videoCollection.title }}
+            </h2>
+            <p class="cy-caption side-episodes__count">
+              共 <span class="cy-num">{{ videoCollection.videos.length }}</span> 个视频
+            </p>
+          </div>
 
-          <RouterLink
-            v-for="collection in videoCollections"
-            :key="collection.id"
-            class="side-collection"
-            :to="{ name: 'collection', params: { id: collection.id } }"
-          >
-            <div class="side-collection__cover">
-              <img
-                v-if="collection.cover_url"
-                class="side-collection__img"
-                :src="collection.cover_url"
-                :alt="collection.title"
-                loading="lazy"
-              />
-              <span v-else class="side-collection__fallback" aria-hidden="true">
-                {{ initialOf(collection.title) }}
-              </span>
-            </div>
-
-            <div class="side-collection__info">
-              <h3 class="side-collection__name cy-clamp-2">{{ collection.title }}</h3>
-              <p class="cy-caption">
-                共 <span class="cy-num">{{ collection.video_count }}</span> 个视频
-              </p>
-              <span class="side-collection__index">
-                <AppIcon name="play" :size="12" />
-                第 <span class="cy-num">{{ collection.current_index }}</span> 集
-              </span>
-            </div>
-          </RouterLink>
+          <ol class="side-episodes__list">
+            <li
+              v-for="(item, index) in videoCollection.videos"
+              :key="item.id"
+              class="side-episode"
+              :class="{ 'is-current': index + 1 === collectionIndex }"
+            >
+              <RouterLink
+                class="side-episode__link"
+                :to="{ name: 'video-detail', params: { id: item.id } }"
+                :aria-current="index + 1 === collectionIndex ? 'true' : undefined"
+                @click="onEpisodeClick($event, index + 1 === collectionIndex)"
+              >
+                <span class="side-episode__index cy-num">{{ index + 1 }}</span>
+                <span class="side-episode__title cy-clamp-2">{{ item.title }}</span>
+                <span class="side-episode__duration cy-num">
+                  {{ formatDuration(item.duration) }}
+                </span>
+              </RouterLink>
+            </li>
+          </ol>
         </section>
 
         <div class="detail__side-head">
@@ -2883,6 +2952,23 @@ onBeforeUnmount(() => {
 
 .pc__btn:hover {
   background: rgba(255, 255, 255, 0.16);
+}
+
+/* 切集按钮比播放键略小一号，视觉重心仍落在中间的播放/暂停上 */
+.pc__btn--skip {
+  width: 30px;
+  height: 30px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+/* 到头（第一集 / 最后一集）时置灰并保持悬浮不反馈，避免点了没反应却没提示 */
+.pc__btn--skip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pc__btn--skip:disabled:hover {
+  background: transparent;
 }
 
 /* 带文字的按钮（当前用于清晰度）：宽度随内容，图标与档位文案并排 */
@@ -3455,82 +3541,97 @@ onBeforeUnmount(() => {
   gap: var(--cy-space-3);
 }
 
-/* 合集卡片：与播放队列共用侧栏宽度，封面比队列项略窄，给集数徽标留出空间 */
-.side-collections {
+/* 合集剧集列表：与播放队列共用侧栏宽度，限高滚动避免长合集撑破布局 */
+.side-episodes {
   margin-bottom: var(--cy-space-5);
 }
 
-.side-collections__title {
-  margin-bottom: var(--cy-space-3);
+.side-episodes__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cy-space-3);
+  margin-bottom: var(--cy-space-2);
 }
 
-.side-collection {
+.side-episodes__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-episodes__count {
+  flex-shrink: 0;
+}
+
+.side-episodes__list {
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.side-episode + .side-episode {
+  margin-top: 2px;
+}
+
+.side-episode__link {
   display: flex;
-  gap: var(--cy-space-3);
-  padding: var(--cy-space-1);
+  align-items: center;
+  gap: var(--cy-space-2);
+  padding: 6px var(--cy-space-2);
   border-radius: var(--cy-radius-sm);
   transition: background-color var(--cy-dur-fast) var(--cy-ease);
 }
 
-.side-collection + .side-collection {
-  margin-top: var(--cy-space-2);
-}
-
-.side-collection:hover {
+.side-episode__link:hover {
   background: var(--cy-surface-2);
 }
 
-.side-collection__cover {
-  position: relative;
-  flex-shrink: 0;
-  width: 120px;
-  aspect-ratio: 16 / 9;
-  border-radius: var(--cy-radius-sm);
-  overflow: hidden;
-  background: var(--cy-surface-2);
-}
-
-.side-collection__img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.side-collection__fallback {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  background: var(--cy-primary);
-  color: var(--cy-on-primary);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.side-collection__info {
-  min-width: 0;
-}
-
-.side-collection__name {
-  color: var(--cy-text);
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 500;
-}
-
-/* 集数徽标：浅紫底强调「当前视频在这里」，与队列的「正在播放」呼应 */
-.side-collection__index {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 20px;
-  margin-top: var(--cy-space-1);
-  padding: 0 var(--cy-space-2);
-  border-radius: var(--cy-radius-full);
+/* 当前集高亮且不可点击，与播放队列的「正在播放」呼应 */
+.side-episode.is-current .side-episode__link {
   background: var(--cy-primary-soft);
-  color: var(--cy-primary-strong);
+  cursor: default;
+}
+
+.side-episode.is-current .side-episode__link:hover {
+  background: var(--cy-primary-soft);
+}
+
+.side-episode__index {
+  flex-shrink: 0;
+  width: 22px;
+  color: var(--cy-text-muted);
   font-size: 12px;
-  line-height: 20px;
+  line-height: 18px;
+  text-align: right;
+}
+
+.side-episode__title {
+  flex: 1;
+  min-width: 0;
+  color: var(--cy-text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.side-episode__duration {
+  flex-shrink: 0;
+  color: var(--cy-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.side-episode.is-current .side-episode__index,
+.side-episode.is-current .side-episode__title,
+.side-episode.is-current .side-episode__duration {
+  color: var(--cy-primary-strong);
+}
+
+.side-episode.is-current .side-episode__title {
   font-weight: 600;
 }
 
@@ -3738,10 +3839,6 @@ onBeforeUnmount(() => {
 @media (max-width: 599px) {
   .related__cover {
     width: 128px;
-  }
-
-  .side-collection__cover {
-    width: 104px;
   }
 }
 

@@ -168,12 +168,14 @@ export const VIDEO_STATUS_FAILED = 3
  * 字段严格按前后端约定（JSON snake_case、ID 为字符串），契约更新后可改为生成。
  */
 
-/** 某个视频所属的合集：观看页右侧「合集」卡片用，current_index 为当前视频在合集内的序号 */
-export interface VideoCollectionRef {
-  id: string
-  title: string
-  cover_url: string
-  video_count: number
+/**
+ * 某个视频所属的合集上下文：观看页右侧剧集列表用。
+ *
+ * collection 为 null 表示视频不属于任何公开合集，前端整块隐藏面板；
+ * current_index 为当前视频在 collection.videos 中的 1 基序号，0 表示不在可见列表中。
+ */
+export interface VideoCollectionContext {
+  collection: CollectionDetail | null
   current_index: number
 }
 

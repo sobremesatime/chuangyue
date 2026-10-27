@@ -42,19 +42,6 @@ type CollectionInfo struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// CollectionBrief 是「视频属于哪些合集」场景的精简信息。
-//
-// 与 CollectionInfo 的关系：视频详情页只需要渲染合集入口与当前播放位置，
-// 不需要简介、状态等管理字段，因此单独定义，避免把管理端字段暴露给公开读。
-type CollectionBrief struct {
-	ID         int64  `json:"id,string"`
-	Title      string `json:"title"`
-	CoverURL   string `json:"cover_url"`
-	VideoCount int64  `json:"video_count"`
-	// CurrentIndex 是目标视频在合集公开播放列表中的 1 基序号；0 表示该视频不在公开列表中。
-	CurrentIndex int `json:"current_index"`
-}
-
 // CollectionDetail 是合集详情：合集信息（平铺）+ 有序播放列表。
 //
 // 合集字段内嵌而不是包一层 collection：详情页与列表页共用同一套字段，

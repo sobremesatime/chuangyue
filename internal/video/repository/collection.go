@@ -97,65 +97,26 @@ func (r *Repository) ListCollectionVideos(ctx context.Context, collectionID int6
 	return list, err
 }
 
-// ListCollectionVideosByCollections 批量返回多个合集的关联行。
+// GetPublicCollectionByVideo 返回包含该视频的公开合集，查不到时返回 gorm.ErrRecordNotFound。
 //
-// 按 (collection_id, sort, id) 升序：同一个合集的关联行在结果里连续且有序，
-// 调用方一次扫描就能同时得到「每个合集的播放顺序」，不必按合集逐个查询。
-func (r *Repository) ListCollectionVideosByCollections(ctx context.Context, collectionIDs []int64) ([]model.CollectionVideo, error) {
-	if len(collectionIDs) == 0 {
-		return []model.CollectionVideo{}, nil
-	}
-	var list []model.CollectionVideo
-	err := r.db.WithContext(ctx).
-		Where("collection_id IN ?", collectionIDs).
-		Order("collection_id ASC, sort ASC, id ASC").
-		Find(&list).
-		Error
-	return list, err
-}
-
-// ListPublicCollectionsByVideo 返回包含该视频的公开合集，按合集创建时间倒序。
-//
+// 单归属下最多只有一个合集，因此返回单条而不是列表；调用方把「未找到」当作
+// 「视频不属于任何合集」的正常状态，而不是错误。
 // 只取 status=1：草稿合集在前台等同不存在（读取侧统一按「不存在」处理）。
-func (r *Repository) ListPublicCollectionsByVideo(ctx context.Context, videoID int64) ([]model.Collection, error) {
-	var list []model.Collection
+// 即便唯一键因历史数据缺失而未生效，这里按创建时间取一条也能给出确定结果。
+func (r *Repository) GetPublicCollectionByVideo(ctx context.Context, videoID int64) (*model.Collection, error) {
+	var c model.Collection
 	err := r.db.WithContext(ctx).
 		Model(&model.Collection{}).
+		Select("collection.*").
 		Joins("JOIN collection_video ON collection_video.collection_id = collection.id").
 		Where("collection_video.video_id = ? AND collection.status = ?", videoID, model.CollectionStatusPublic).
 		Order("collection.created_at DESC, collection.id DESC").
-		Find(&list).
-		Error
-	return list, err
-}
-
-// PublishedCovers 返回给定视频中「已上架」记录的 id→封面地址。
-//
-// 返回 map 而不是切片，是因为调用方既要判断「视频是否已上架」（键是否存在），
-// 又要取封面做合集封面兜底，一次查询同时满足两者。
-func (r *Repository) PublishedCovers(ctx context.Context, ids []int64) (map[int64]string, error) {
-	if len(ids) == 0 {
-		return map[int64]string{}, nil
-	}
-	var rows []struct {
-		ID       int64
-		CoverURL string
-	}
-	err := r.db.WithContext(ctx).
-		Model(&model.Video{}).
-		Select("id", "cover_url").
-		Where("id IN ? AND status = ?", ids, model.StatusPublished).
-		Scan(&rows).
+		First(&c).
 		Error
 	if err != nil {
 		return nil, err
 	}
-
-	covers := make(map[int64]string, len(rows))
-	for _, row := range rows {
-		covers[row.ID] = row.CoverURL
-	}
-	return covers, nil
+	return &c, nil
 }
 
 // FirstPublishedCovers 返回每个合集中「第一个已上架视频」的封面，供列表页做封面兜底。
@@ -194,9 +155,14 @@ func (r *Repository) FirstPublishedCovers(ctx context.Context, collectionIDs []i
 	return covers, nil
 }
 
-// AddCollectionVideos 把视频按传入顺序追加到合集末尾，已存在的关联忽略。
+// AddCollectionVideos 把视频按传入顺序追加到目标合集末尾，已属于其他合集的视频随之移出原合集。
 //
-// 幂等靠唯一键 uk_collection_video 与「先读已存在集合」两道保险：
+// 单归属下「加入」等价于「从原合集移出」：只写目标合集而不删旧关联，会撞上
+// uk_video 唯一键；即便绕过唯一键，视频也会同时出现在两个合集里。
+// 因此同一事务内先删除这些视频挂在其他合集上的关联，再插入目标合集，
+// 并连带重算被移出合集的 video_count——否则旧合集会一直显示比实际多的集数。
+//
+// 幂等靠唯一键 uk_video 与「先读已存在集合」两道保险：
 // 已存在的视频既不插入、也不占用新的 sort 序号。
 // 用「当前最大 sort + 1」续排而不是 COUNT(*)：中间删过视频后 COUNT 会小于最大 sort，
 // 继续用 COUNT 会与现存行的 sort 撞号，让「追加到末尾」失去意义。
@@ -215,6 +181,24 @@ func (r *Repository) AddCollectionVideos(ctx context.Context, collectionID int64
 		exists := make(map[int64]struct{}, len(existing))
 		for _, id := range existing {
 			exists[id] = struct{}{}
+		}
+
+		// 先查出受影响的旧合集再去删除：删完就查不到它们，计数也就无从修正。
+		var oldCollectionIDs []int64
+		if err := tx.Model(&model.CollectionVideo{}).
+			Where("video_id IN ? AND collection_id <> ?", videoIDs, collectionID).
+			Distinct().
+			Pluck("collection_id", &oldCollectionIDs).
+			Error; err != nil {
+			return err
+		}
+
+		if len(oldCollectionIDs) > 0 {
+			if err := tx.Where("video_id IN ? AND collection_id <> ?", videoIDs, collectionID).
+				Delete(&model.CollectionVideo{}).
+				Error; err != nil {
+				return err
+			}
 		}
 
 		// 合集为空时 COALESCE 给出 -1，从 0 开始编号，与列默认值一致。
@@ -243,16 +227,23 @@ func (r *Repository) AddCollectionVideos(ctx context.Context, collectionID int64
 			exists[videoID] = struct{}{}
 			next++
 		}
-		if len(rows) == 0 {
-			return nil
+		if len(rows) > 0 {
+			// OnConflict DoNothing：与并发请求撞上同一行时以「先到者为准」，
+			// 等价于「重复添加忽略」，而不是让整个请求失败。
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
+				return err
+			}
 		}
 
-		// OnConflict DoNothing：与并发请求撞上同一行时以「先到者为准」，
-		// 等价于「重复添加忽略」，而不是让整个请求失败。
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
+		if err := recountCollectionVideos(tx, collectionID); err != nil {
 			return err
 		}
-		return recountCollectionVideos(tx, collectionID)
+		for _, oldID := range oldCollectionIDs {
+			if err := recountCollectionVideos(tx, oldID); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

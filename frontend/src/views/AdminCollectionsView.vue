@@ -504,6 +504,7 @@ onMounted(() => void load(1))
       <div v-else class="panel__body">
         <div class="panel__add">
           <h3 class="cy-label">添加视频</h3>
+          <p class="cy-caption panel__hint">已属于其他合集的视频会被移入本合集。</p>
 
           <form class="panel__search" role="search" @submit.prevent="submitSearch">
             <input

@@ -87,7 +87,19 @@ func (h *CollectionReadHandler) Detail(c *gin.Context) {
 	})
 }
 
+// videoCollection 是「视频所属合集」的响应。
+//
+// collection 为 null 表示视频不属于任何公开合集，前端据此整块隐藏合集面板；
+// current_index 为 0 表示当前视频不在可见列表中。
+type videoCollection struct {
+	Collection   *dto.CollectionDetail `json:"collection"`
+	CurrentIndex int32                 `json:"current_index"`
+}
+
 // ByVideo 反查视频所属的公开合集：GET /api/v1/videos/{id}/collections
+//
+// 单归属下最多只有一个合集，因此把 proto 的 detail 摊平成 collection 对象（含 videos 数组），
+// 不再返回合集列表；无合集时 collection 为 null。
 func (h *CollectionReadHandler) ByVideo(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -103,11 +115,18 @@ func (h *CollectionReadHandler) ByVideo(c *gin.Context) {
 		return
 	}
 
-	list := make([]dto.CollectionBrief, 0, len(resp.GetCollections()))
-	for _, v := range resp.GetCollections() {
-		list = append(list, toCollectionBrief(v))
+	out := videoCollection{CurrentIndex: resp.GetCurrentIndex()}
+	if detail := resp.GetDetail(); detail != nil {
+		videos := make([]dto.VideoInfo, 0, len(detail.GetVideos()))
+		for _, v := range detail.GetVideos() {
+			videos = append(videos, toVideoInfo(v))
+		}
+		out.Collection = &dto.CollectionDetail{
+			CollectionInfo: toCollectionInfo(detail.GetCollection()),
+			Videos:         videos,
+		}
 	}
-	response.OK(c, list)
+	response.OK(c, out)
 }
 
 // CollectionAdminHandler 是管理端合集 CRUD 的网关处理器。
@@ -369,15 +388,4 @@ func toCollectionInfo(c *videov1.CollectionInfo) dto.CollectionInfo {
 		info.CreatedAt = ts.AsTime().In(time.Local)
 	}
 	return info
-}
-
-// toCollectionBrief 把跨服务契约的合集精简信息映射回对外 DTO。
-func toCollectionBrief(b *videov1.CollectionBrief) dto.CollectionBrief {
-	return dto.CollectionBrief{
-		ID:           b.GetId(),
-		Title:        b.GetTitle(),
-		CoverURL:     b.GetCoverUrl(),
-		VideoCount:   b.GetVideoCount(),
-		CurrentIndex: int(b.GetCurrentIndex()),
-	}
 }

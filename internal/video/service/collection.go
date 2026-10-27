@@ -97,75 +97,34 @@ func (s *Service) collectionDetail(ctx context.Context, id int64, onlyPublic boo
 	return &dto.CollectionDetail{CollectionInfo: *info, Videos: videos}, nil
 }
 
-// GetCollectionByVideo 返回包含该视频的公开合集，并给出该视频在合集公开列表中的序号。
+// GetCollectionByVideo 返回视频所属的公开合集详情，并给出当前视频在可见列表中的 1 基序号。
 //
-// 序号按「已上架视频」的 (sort, id) 顺序计算，与 GetCollection 返回的播放列表口径一致——
-// 若把下架视频也计入，前端「第 N 个」就会指到列表里并不存在的条目。
-func (s *Service) GetCollectionByVideo(ctx context.Context, videoID int64) ([]dto.CollectionBrief, error) {
-	collections, err := s.repo.ListPublicCollectionsByVideo(ctx, videoID)
+// 序号按公开可见列表（已上架视频）计算，与前台播放列表同一口径——若把下架视频也计入，
+// 前端「第 N 集」就会指到列表里并不存在的条目。视频不在可见列表时返回 0（例如已下架），
+// 合集本身仍照常返回。
+// 没有公开合集不是错误：返回 (nil, 0, nil)，由前端整块隐藏合集面板。
+func (s *Service) GetCollectionByVideo(ctx context.Context, videoID int64) (*dto.CollectionDetail, int32, error) {
+	collection, err := s.repo.GetPublicCollectionByVideo(ctx, videoID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, 0, nil
+	}
 	if err != nil {
-		return nil, err
-	}
-	briefs := make([]dto.CollectionBrief, 0, len(collections))
-	if len(collections) == 0 {
-		return briefs, nil
+		return nil, 0, err
 	}
 
-	collectionIDs := make([]int64, 0, len(collections))
-	for i := range collections {
-		collectionIDs = append(collectionIDs, collections[i].ID)
-	}
-	links, err := s.repo.ListCollectionVideosByCollections(ctx, collectionIDs)
+	detail, err := s.collectionDetail(ctx, collection.ID, true)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	// PublishedCovers 的键即「已上架视频」，一次查询同时拿到可见性判断与封面。
-	videoIDs := make([]int64, 0, len(links))
-	for _, link := range links {
-		videoIDs = append(videoIDs, link.VideoID)
-	}
-	covers, err := s.repo.PublishedCovers(ctx, videoIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	linksByCollection := make(map[int64][]model.CollectionVideo, len(collectionIDs))
-	for _, link := range links {
-		linksByCollection[link.CollectionID] = append(linksByCollection[link.CollectionID], link)
-	}
-
-	for _, c := range collections {
-		// 关联行已按 (sort, id) 升序返回，同一个合集的行在切片里也是有序的。
-		index, current := 0, 0
-		firstCover, hasFirstCover := "", false
-		for _, link := range linksByCollection[c.ID] {
-			cover, published := covers[link.VideoID]
-			if !published {
-				continue
-			}
-			index++
-			if !hasFirstCover {
-				firstCover, hasFirstCover = cover, true
-			}
-			if link.VideoID == videoID {
-				current = index
-			}
+	var currentIndex int32
+	for i := range detail.Videos {
+		if detail.Videos[i].ID == videoID {
+			currentIndex = int32(i + 1)
+			break
 		}
-
-		brief := dto.CollectionBrief{
-			ID:           c.ID,
-			Title:        c.Title,
-			CoverURL:     c.CoverURL,
-			VideoCount:   c.VideoCount,
-			CurrentIndex: current,
-		}
-		if brief.CoverURL == "" {
-			brief.CoverURL = firstCover
-		}
-		briefs = append(briefs, brief)
 	}
-	return briefs, nil
+	return detail, currentIndex, nil
 }
 
 // ListCollections 分页查询公开合集，供前台列表使用。
@@ -306,9 +265,10 @@ func (s *Service) DeleteCollection(ctx context.Context, id int64) error {
 	return s.repo.DeleteCollection(ctx, id)
 }
 
-// AddCollectionVideos 把视频按传入顺序追加到合集末尾。
+// AddCollectionVideos 把视频按传入顺序追加到合集末尾；已属于其他合集的视频会被移出原合集。
 //
-// 幂等：已在合集内的视频被忽略（不报错、不占新序号）。
+// 单归属下「加入本合集」同时意味着「离开原合集」，由仓储在同一事务里完成并修正两边计数。
+// 已在目标合集的视频被忽略（不报错、不占新序号）。
 // 入参先做「非空 / 不重复 / 存在」三重校验，再交给仓储在事务里追加并重算计数。
 func (s *Service) AddCollectionVideos(ctx context.Context, collectionID int64, videoIDs []int64) (*dto.CollectionInfo, error) {
 	if _, err := s.getCollectionForAdmin(ctx, collectionID); err != nil {

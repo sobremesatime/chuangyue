@@ -461,34 +461,32 @@ func (x *CollectionInfo) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// CollectionBrief 是「视频属于哪些合集」场景的精简信息。
-type CollectionBrief struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	Id         int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Title      string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
-	CoverUrl   string                 `protobuf:"bytes,3,opt,name=cover_url,json=coverUrl,proto3" json:"cover_url,omitempty"`
-	VideoCount int64                  `protobuf:"varint,4,opt,name=video_count,json=videoCount,proto3" json:"video_count,omitempty"`
-	// current_index 是目标视频在合集公开播放列表中的 1 基序号；
-	// 0 表示该视频不在公开列表中（例如尚未上架）。
-	CurrentIndex  int32 `protobuf:"varint,5,opt,name=current_index,json=currentIndex,proto3" json:"current_index,omitempty"`
+// CollectionDetail 是合集的完整视图：合集信息 + 有序视频列表。
+//
+// 单独定义而不是复用 GetCollectionResponse：视频详情页需要把「合集 + 播放列表」
+// 作为一个整体返回（或整体为空），与「查询某个合集」的响应语义不同。
+type CollectionDetail struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Collection    *CollectionInfo        `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
+	Videos        []*VideoInfo           `protobuf:"bytes,2,rep,name=videos,proto3" json:"videos,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *CollectionBrief) Reset() {
-	*x = CollectionBrief{}
+func (x *CollectionDetail) Reset() {
+	*x = CollectionDetail{}
 	mi := &file_video_v1_video_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CollectionBrief) String() string {
+func (x *CollectionDetail) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CollectionBrief) ProtoMessage() {}
+func (*CollectionDetail) ProtoMessage() {}
 
-func (x *CollectionBrief) ProtoReflect() protoreflect.Message {
+func (x *CollectionDetail) ProtoReflect() protoreflect.Message {
 	mi := &file_video_v1_video_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -500,44 +498,23 @@ func (x *CollectionBrief) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CollectionBrief.ProtoReflect.Descriptor instead.
-func (*CollectionBrief) Descriptor() ([]byte, []int) {
+// Deprecated: Use CollectionDetail.ProtoReflect.Descriptor instead.
+func (*CollectionDetail) Descriptor() ([]byte, []int) {
 	return file_video_v1_video_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *CollectionBrief) GetId() int64 {
+func (x *CollectionDetail) GetCollection() *CollectionInfo {
 	if x != nil {
-		return x.Id
+		return x.Collection
 	}
-	return 0
+	return nil
 }
 
-func (x *CollectionBrief) GetTitle() string {
+func (x *CollectionDetail) GetVideos() []*VideoInfo {
 	if x != nil {
-		return x.Title
+		return x.Videos
 	}
-	return ""
-}
-
-func (x *CollectionBrief) GetCoverUrl() string {
-	if x != nil {
-		return x.CoverUrl
-	}
-	return ""
-}
-
-func (x *CollectionBrief) GetVideoCount() int64 {
-	if x != nil {
-		return x.VideoCount
-	}
-	return 0
-}
-
-func (x *CollectionBrief) GetCurrentIndex() int32 {
-	if x != nil {
-		return x.CurrentIndex
-	}
-	return 0
+	return nil
 }
 
 // ReportInfo 是对外暴露的举报信息。
@@ -3658,7 +3635,7 @@ func (x *AdminGetCollectionResponse) GetVideos() []*VideoInfo {
 	return nil
 }
 
-// GetCollectionByVideo 反查视频所属的公开合集，并给出它在各合集内的序号。
+// GetCollectionByVideo 返回视频所属的公开合集详情，并给出当前视频在可见列表中的序号。
 type GetCollectionByVideoRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VideoId       int64                  `protobuf:"varint,1,opt,name=video_id,json=videoId,proto3" json:"video_id,omitempty"`
@@ -3704,8 +3681,12 @@ func (x *GetCollectionByVideoRequest) GetVideoId() int64 {
 }
 
 type GetCollectionByVideoResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Collections   []*CollectionBrief     `protobuf:"bytes,1,rep,name=collections,proto3" json:"collections,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// detail 为空表示该视频不属于任何公开合集，前端据此整块隐藏右侧合集面板。
+	Detail *CollectionDetail `protobuf:"bytes,1,opt,name=detail,proto3" json:"detail,omitempty"`
+	// current_index 是当前视频在 detail.videos 中的序号（从 1 开始）；
+	// 0 表示当前视频不在可见列表中（例如已下架但合集仍公开）。
+	CurrentIndex  int32 `protobuf:"varint,2,opt,name=current_index,json=currentIndex,proto3" json:"current_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3740,11 +3721,18 @@ func (*GetCollectionByVideoResponse) Descriptor() ([]byte, []int) {
 	return file_video_v1_video_proto_rawDescGZIP(), []int{60}
 }
 
-func (x *GetCollectionByVideoResponse) GetCollections() []*CollectionBrief {
+func (x *GetCollectionByVideoResponse) GetDetail() *CollectionDetail {
 	if x != nil {
-		return x.Collections
+		return x.Detail
 	}
 	return nil
+}
+
+func (x *GetCollectionByVideoResponse) GetCurrentIndex() int32 {
+	if x != nil {
+		return x.CurrentIndex
+	}
+	return 0
 }
 
 // ListCollections 公开合集列表，仅返回 status=1。
@@ -4308,6 +4296,8 @@ func (x *DeleteCollectionResponse) GetId() string {
 }
 
 // AddCollectionVideos 按传入顺序把视频追加到合集末尾（重复添加忽略）。
+//
+// 视频单归属：已属于其他合集的视频会被移出原合集，而不是同时出现在两个合集里。
 type AddCollectionVideosRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CollectionId  int64                  `protobuf:"varint,1,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
@@ -4656,14 +4646,12 @@ const file_video_v1_video_proto_rawDesc = "" +
 	"\vvideo_count\x18\a \x01(\x03R\n" +
 	"videoCount\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x9a\x01\n" +
-	"\x0fCollectionBrief\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x14\n" +
-	"\x05title\x18\x02 \x01(\tR\x05title\x12\x1b\n" +
-	"\tcover_url\x18\x03 \x01(\tR\bcoverUrl\x12\x1f\n" +
-	"\vvideo_count\x18\x04 \x01(\x03R\n" +
-	"videoCount\x12#\n" +
-	"\rcurrent_index\x18\x05 \x01(\x05R\fcurrentIndex\"\xa2\x03\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"y\n" +
+	"\x10CollectionDetail\x128\n" +
+	"\n" +
+	"collection\x18\x01 \x01(\v2\x18.video.v1.CollectionInfoR\n" +
+	"collection\x12+\n" +
+	"\x06videos\x18\x02 \x03(\v2\x13.video.v1.VideoInfoR\x06videos\"\xa2\x03\n" +
 	"\n" +
 	"ReportInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
@@ -4882,9 +4870,10 @@ const file_video_v1_video_proto_rawDesc = "" +
 	"collection\x12+\n" +
 	"\x06videos\x18\x02 \x03(\v2\x13.video.v1.VideoInfoR\x06videos\"8\n" +
 	"\x1bGetCollectionByVideoRequest\x12\x19\n" +
-	"\bvideo_id\x18\x01 \x01(\x03R\avideoId\"[\n" +
-	"\x1cGetCollectionByVideoResponse\x12;\n" +
-	"\vcollections\x18\x01 \x03(\v2\x19.video.v1.CollectionBriefR\vcollections\"I\n" +
+	"\bvideo_id\x18\x01 \x01(\x03R\avideoId\"w\n" +
+	"\x1cGetCollectionByVideoResponse\x122\n" +
+	"\x06detail\x18\x01 \x01(\v2\x1a.video.v1.CollectionDetailR\x06detail\x12#\n" +
+	"\rcurrent_index\x18\x02 \x01(\x05R\fcurrentIndex\"I\n" +
 	"\x16ListCollectionsRequest\x12\x12\n" +
 	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\"\x9c\x01\n" +
@@ -5007,7 +4996,7 @@ var file_video_v1_video_proto_goTypes = []any{
 	(*VideoInfo)(nil),                       // 1: video.v1.VideoInfo
 	(*UploadedPart)(nil),                    // 2: video.v1.UploadedPart
 	(*CollectionInfo)(nil),                  // 3: video.v1.CollectionInfo
-	(*CollectionBrief)(nil),                 // 4: video.v1.CollectionBrief
+	(*CollectionDetail)(nil),                // 4: video.v1.CollectionDetail
 	(*ReportInfo)(nil),                      // 5: video.v1.ReportInfo
 	(*GetVideoRequest)(nil),                 // 6: video.v1.GetVideoRequest
 	(*GetVideoResponse)(nil),                // 7: video.v1.GetVideoResponse
@@ -5086,114 +5075,116 @@ var file_video_v1_video_proto_depIdxs = []int32{
 	77, // 0: video.v1.VideoBrief.created_at:type_name -> google.protobuf.Timestamp
 	77, // 1: video.v1.VideoInfo.created_at:type_name -> google.protobuf.Timestamp
 	77, // 2: video.v1.CollectionInfo.created_at:type_name -> google.protobuf.Timestamp
-	77, // 3: video.v1.ReportInfo.created_at:type_name -> google.protobuf.Timestamp
-	77, // 4: video.v1.ReportInfo.handled_at:type_name -> google.protobuf.Timestamp
-	1,  // 5: video.v1.GetVideoResponse.video:type_name -> video.v1.VideoInfo
-	0,  // 6: video.v1.GetVideosResponse.videos:type_name -> video.v1.VideoBrief
-	1,  // 7: video.v1.GetVideoInfosResponse.videos:type_name -> video.v1.VideoInfo
-	0,  // 8: video.v1.ListFeedCandidatesResponse.videos:type_name -> video.v1.VideoBrief
-	1,  // 9: video.v1.ListVideosResponse.videos:type_name -> video.v1.VideoInfo
-	1,  // 10: video.v1.AdminListVideosResponse.videos:type_name -> video.v1.VideoInfo
-	1,  // 11: video.v1.RetryTranscodeResponse.video:type_name -> video.v1.VideoInfo
-	1,  // 12: video.v1.UpdateVideoStatusResponse.video:type_name -> video.v1.VideoInfo
-	31, // 13: video.v1.UpdateVideoFrame.meta:type_name -> video.v1.UpdateVideoMeta
-	1,  // 14: video.v1.UpdateVideoResponse.video:type_name -> video.v1.VideoInfo
-	34, // 15: video.v1.UploadVideoFrame.meta:type_name -> video.v1.UploadVideoMeta
-	1,  // 16: video.v1.UploadVideoResponse.video:type_name -> video.v1.VideoInfo
-	2,  // 17: video.v1.InitUploadResponse.uploaded:type_name -> video.v1.UploadedPart
-	2,  // 18: video.v1.UploadStatusResponse.uploaded:type_name -> video.v1.UploadedPart
-	43, // 19: video.v1.PutPartFrame.meta:type_name -> video.v1.PutPartMeta
-	2,  // 20: video.v1.PutPartResponse.part:type_name -> video.v1.UploadedPart
-	2,  // 21: video.v1.CompleteUploadRequest.parts:type_name -> video.v1.UploadedPart
-	1,  // 22: video.v1.CompleteUploadResponse.video:type_name -> video.v1.VideoInfo
-	5,  // 23: video.v1.CreateReportResponse.report:type_name -> video.v1.ReportInfo
-	5,  // 24: video.v1.ListReportsResponse.reports:type_name -> video.v1.ReportInfo
-	5,  // 25: video.v1.HandleReportResponse.report:type_name -> video.v1.ReportInfo
-	3,  // 26: video.v1.GetCollectionResponse.collection:type_name -> video.v1.CollectionInfo
-	1,  // 27: video.v1.GetCollectionResponse.videos:type_name -> video.v1.VideoInfo
-	3,  // 28: video.v1.AdminGetCollectionResponse.collection:type_name -> video.v1.CollectionInfo
-	1,  // 29: video.v1.AdminGetCollectionResponse.videos:type_name -> video.v1.VideoInfo
-	4,  // 30: video.v1.GetCollectionByVideoResponse.collections:type_name -> video.v1.CollectionBrief
-	3,  // 31: video.v1.ListCollectionsResponse.collections:type_name -> video.v1.CollectionInfo
-	3,  // 32: video.v1.AdminListCollectionsResponse.collections:type_name -> video.v1.CollectionInfo
-	3,  // 33: video.v1.CreateCollectionResponse.collection:type_name -> video.v1.CollectionInfo
-	3,  // 34: video.v1.UpdateCollectionResponse.collection:type_name -> video.v1.CollectionInfo
-	3,  // 35: video.v1.AddCollectionVideosResponse.collection:type_name -> video.v1.CollectionInfo
-	3,  // 36: video.v1.RemoveCollectionVideoResponse.collection:type_name -> video.v1.CollectionInfo
-	3,  // 37: video.v1.ReorderCollectionVideosResponse.collection:type_name -> video.v1.CollectionInfo
-	6,  // 38: video.v1.VideoService.GetVideo:input_type -> video.v1.GetVideoRequest
-	8,  // 39: video.v1.VideoService.GetVideos:input_type -> video.v1.GetVideosRequest
-	10, // 40: video.v1.VideoService.GetVideoInfos:input_type -> video.v1.GetVideoInfosRequest
-	12, // 41: video.v1.VideoService.ListFeedCandidates:input_type -> video.v1.ListFeedCandidatesRequest
-	14, // 42: video.v1.VideoService.ListVideos:input_type -> video.v1.ListVideosRequest
-	16, // 43: video.v1.VideoService.IncrViewCount:input_type -> video.v1.IncrViewCountRequest
-	18, // 44: video.v1.VideoService.GetTranscodeState:input_type -> video.v1.GetTranscodeStateRequest
-	20, // 45: video.v1.VideoService.ReportTranscodeResult:input_type -> video.v1.ReportTranscodeResultRequest
-	22, // 46: video.v1.VideoService.AdminListVideos:input_type -> video.v1.AdminListVideosRequest
-	26, // 47: video.v1.VideoService.UpdateVideoStatus:input_type -> video.v1.UpdateVideoStatusRequest
-	24, // 48: video.v1.VideoService.RetryTranscode:input_type -> video.v1.RetryTranscodeRequest
-	30, // 49: video.v1.VideoService.UpdateVideo:input_type -> video.v1.UpdateVideoFrame
-	28, // 50: video.v1.VideoService.DeleteVideo:input_type -> video.v1.DeleteVideoRequest
-	55, // 51: video.v1.VideoService.GetCollection:input_type -> video.v1.GetCollectionRequest
-	59, // 52: video.v1.VideoService.GetCollectionByVideo:input_type -> video.v1.GetCollectionByVideoRequest
-	61, // 53: video.v1.VideoService.ListCollections:input_type -> video.v1.ListCollectionsRequest
-	63, // 54: video.v1.VideoService.AdminListCollections:input_type -> video.v1.AdminListCollectionsRequest
-	57, // 55: video.v1.VideoService.AdminGetCollection:input_type -> video.v1.AdminGetCollectionRequest
-	65, // 56: video.v1.VideoService.CreateCollection:input_type -> video.v1.CreateCollectionRequest
-	67, // 57: video.v1.VideoService.UpdateCollection:input_type -> video.v1.UpdateCollectionRequest
-	69, // 58: video.v1.VideoService.DeleteCollection:input_type -> video.v1.DeleteCollectionRequest
-	71, // 59: video.v1.VideoService.AddCollectionVideos:input_type -> video.v1.AddCollectionVideosRequest
-	73, // 60: video.v1.VideoService.RemoveCollectionVideo:input_type -> video.v1.RemoveCollectionVideoRequest
-	75, // 61: video.v1.VideoService.ReorderCollectionVideos:input_type -> video.v1.ReorderCollectionVideosRequest
-	33, // 62: video.v1.UploadService.UploadVideo:input_type -> video.v1.UploadVideoFrame
-	36, // 63: video.v1.UploadService.InitUpload:input_type -> video.v1.InitUploadRequest
-	38, // 64: video.v1.UploadService.UploadStatus:input_type -> video.v1.UploadStatusRequest
-	40, // 65: video.v1.UploadService.PresignPart:input_type -> video.v1.PresignPartRequest
-	42, // 66: video.v1.UploadService.PutPart:input_type -> video.v1.PutPartFrame
-	45, // 67: video.v1.UploadService.CompleteUpload:input_type -> video.v1.CompleteUploadRequest
-	47, // 68: video.v1.UploadService.AbortUpload:input_type -> video.v1.AbortUploadRequest
-	49, // 69: video.v1.ReportService.CreateReport:input_type -> video.v1.CreateReportRequest
-	51, // 70: video.v1.ReportService.ListReports:input_type -> video.v1.ListReportsRequest
-	53, // 71: video.v1.ReportService.HandleReport:input_type -> video.v1.HandleReportRequest
-	7,  // 72: video.v1.VideoService.GetVideo:output_type -> video.v1.GetVideoResponse
-	9,  // 73: video.v1.VideoService.GetVideos:output_type -> video.v1.GetVideosResponse
-	11, // 74: video.v1.VideoService.GetVideoInfos:output_type -> video.v1.GetVideoInfosResponse
-	13, // 75: video.v1.VideoService.ListFeedCandidates:output_type -> video.v1.ListFeedCandidatesResponse
-	15, // 76: video.v1.VideoService.ListVideos:output_type -> video.v1.ListVideosResponse
-	17, // 77: video.v1.VideoService.IncrViewCount:output_type -> video.v1.IncrViewCountResponse
-	19, // 78: video.v1.VideoService.GetTranscodeState:output_type -> video.v1.GetTranscodeStateResponse
-	21, // 79: video.v1.VideoService.ReportTranscodeResult:output_type -> video.v1.ReportTranscodeResultResponse
-	23, // 80: video.v1.VideoService.AdminListVideos:output_type -> video.v1.AdminListVideosResponse
-	27, // 81: video.v1.VideoService.UpdateVideoStatus:output_type -> video.v1.UpdateVideoStatusResponse
-	25, // 82: video.v1.VideoService.RetryTranscode:output_type -> video.v1.RetryTranscodeResponse
-	32, // 83: video.v1.VideoService.UpdateVideo:output_type -> video.v1.UpdateVideoResponse
-	29, // 84: video.v1.VideoService.DeleteVideo:output_type -> video.v1.DeleteVideoResponse
-	56, // 85: video.v1.VideoService.GetCollection:output_type -> video.v1.GetCollectionResponse
-	60, // 86: video.v1.VideoService.GetCollectionByVideo:output_type -> video.v1.GetCollectionByVideoResponse
-	62, // 87: video.v1.VideoService.ListCollections:output_type -> video.v1.ListCollectionsResponse
-	64, // 88: video.v1.VideoService.AdminListCollections:output_type -> video.v1.AdminListCollectionsResponse
-	58, // 89: video.v1.VideoService.AdminGetCollection:output_type -> video.v1.AdminGetCollectionResponse
-	66, // 90: video.v1.VideoService.CreateCollection:output_type -> video.v1.CreateCollectionResponse
-	68, // 91: video.v1.VideoService.UpdateCollection:output_type -> video.v1.UpdateCollectionResponse
-	70, // 92: video.v1.VideoService.DeleteCollection:output_type -> video.v1.DeleteCollectionResponse
-	72, // 93: video.v1.VideoService.AddCollectionVideos:output_type -> video.v1.AddCollectionVideosResponse
-	74, // 94: video.v1.VideoService.RemoveCollectionVideo:output_type -> video.v1.RemoveCollectionVideoResponse
-	76, // 95: video.v1.VideoService.ReorderCollectionVideos:output_type -> video.v1.ReorderCollectionVideosResponse
-	35, // 96: video.v1.UploadService.UploadVideo:output_type -> video.v1.UploadVideoResponse
-	37, // 97: video.v1.UploadService.InitUpload:output_type -> video.v1.InitUploadResponse
-	39, // 98: video.v1.UploadService.UploadStatus:output_type -> video.v1.UploadStatusResponse
-	41, // 99: video.v1.UploadService.PresignPart:output_type -> video.v1.PresignPartResponse
-	44, // 100: video.v1.UploadService.PutPart:output_type -> video.v1.PutPartResponse
-	46, // 101: video.v1.UploadService.CompleteUpload:output_type -> video.v1.CompleteUploadResponse
-	48, // 102: video.v1.UploadService.AbortUpload:output_type -> video.v1.AbortUploadResponse
-	50, // 103: video.v1.ReportService.CreateReport:output_type -> video.v1.CreateReportResponse
-	52, // 104: video.v1.ReportService.ListReports:output_type -> video.v1.ListReportsResponse
-	54, // 105: video.v1.ReportService.HandleReport:output_type -> video.v1.HandleReportResponse
-	72, // [72:106] is the sub-list for method output_type
-	38, // [38:72] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	3,  // 3: video.v1.CollectionDetail.collection:type_name -> video.v1.CollectionInfo
+	1,  // 4: video.v1.CollectionDetail.videos:type_name -> video.v1.VideoInfo
+	77, // 5: video.v1.ReportInfo.created_at:type_name -> google.protobuf.Timestamp
+	77, // 6: video.v1.ReportInfo.handled_at:type_name -> google.protobuf.Timestamp
+	1,  // 7: video.v1.GetVideoResponse.video:type_name -> video.v1.VideoInfo
+	0,  // 8: video.v1.GetVideosResponse.videos:type_name -> video.v1.VideoBrief
+	1,  // 9: video.v1.GetVideoInfosResponse.videos:type_name -> video.v1.VideoInfo
+	0,  // 10: video.v1.ListFeedCandidatesResponse.videos:type_name -> video.v1.VideoBrief
+	1,  // 11: video.v1.ListVideosResponse.videos:type_name -> video.v1.VideoInfo
+	1,  // 12: video.v1.AdminListVideosResponse.videos:type_name -> video.v1.VideoInfo
+	1,  // 13: video.v1.RetryTranscodeResponse.video:type_name -> video.v1.VideoInfo
+	1,  // 14: video.v1.UpdateVideoStatusResponse.video:type_name -> video.v1.VideoInfo
+	31, // 15: video.v1.UpdateVideoFrame.meta:type_name -> video.v1.UpdateVideoMeta
+	1,  // 16: video.v1.UpdateVideoResponse.video:type_name -> video.v1.VideoInfo
+	34, // 17: video.v1.UploadVideoFrame.meta:type_name -> video.v1.UploadVideoMeta
+	1,  // 18: video.v1.UploadVideoResponse.video:type_name -> video.v1.VideoInfo
+	2,  // 19: video.v1.InitUploadResponse.uploaded:type_name -> video.v1.UploadedPart
+	2,  // 20: video.v1.UploadStatusResponse.uploaded:type_name -> video.v1.UploadedPart
+	43, // 21: video.v1.PutPartFrame.meta:type_name -> video.v1.PutPartMeta
+	2,  // 22: video.v1.PutPartResponse.part:type_name -> video.v1.UploadedPart
+	2,  // 23: video.v1.CompleteUploadRequest.parts:type_name -> video.v1.UploadedPart
+	1,  // 24: video.v1.CompleteUploadResponse.video:type_name -> video.v1.VideoInfo
+	5,  // 25: video.v1.CreateReportResponse.report:type_name -> video.v1.ReportInfo
+	5,  // 26: video.v1.ListReportsResponse.reports:type_name -> video.v1.ReportInfo
+	5,  // 27: video.v1.HandleReportResponse.report:type_name -> video.v1.ReportInfo
+	3,  // 28: video.v1.GetCollectionResponse.collection:type_name -> video.v1.CollectionInfo
+	1,  // 29: video.v1.GetCollectionResponse.videos:type_name -> video.v1.VideoInfo
+	3,  // 30: video.v1.AdminGetCollectionResponse.collection:type_name -> video.v1.CollectionInfo
+	1,  // 31: video.v1.AdminGetCollectionResponse.videos:type_name -> video.v1.VideoInfo
+	4,  // 32: video.v1.GetCollectionByVideoResponse.detail:type_name -> video.v1.CollectionDetail
+	3,  // 33: video.v1.ListCollectionsResponse.collections:type_name -> video.v1.CollectionInfo
+	3,  // 34: video.v1.AdminListCollectionsResponse.collections:type_name -> video.v1.CollectionInfo
+	3,  // 35: video.v1.CreateCollectionResponse.collection:type_name -> video.v1.CollectionInfo
+	3,  // 36: video.v1.UpdateCollectionResponse.collection:type_name -> video.v1.CollectionInfo
+	3,  // 37: video.v1.AddCollectionVideosResponse.collection:type_name -> video.v1.CollectionInfo
+	3,  // 38: video.v1.RemoveCollectionVideoResponse.collection:type_name -> video.v1.CollectionInfo
+	3,  // 39: video.v1.ReorderCollectionVideosResponse.collection:type_name -> video.v1.CollectionInfo
+	6,  // 40: video.v1.VideoService.GetVideo:input_type -> video.v1.GetVideoRequest
+	8,  // 41: video.v1.VideoService.GetVideos:input_type -> video.v1.GetVideosRequest
+	10, // 42: video.v1.VideoService.GetVideoInfos:input_type -> video.v1.GetVideoInfosRequest
+	12, // 43: video.v1.VideoService.ListFeedCandidates:input_type -> video.v1.ListFeedCandidatesRequest
+	14, // 44: video.v1.VideoService.ListVideos:input_type -> video.v1.ListVideosRequest
+	16, // 45: video.v1.VideoService.IncrViewCount:input_type -> video.v1.IncrViewCountRequest
+	18, // 46: video.v1.VideoService.GetTranscodeState:input_type -> video.v1.GetTranscodeStateRequest
+	20, // 47: video.v1.VideoService.ReportTranscodeResult:input_type -> video.v1.ReportTranscodeResultRequest
+	22, // 48: video.v1.VideoService.AdminListVideos:input_type -> video.v1.AdminListVideosRequest
+	26, // 49: video.v1.VideoService.UpdateVideoStatus:input_type -> video.v1.UpdateVideoStatusRequest
+	24, // 50: video.v1.VideoService.RetryTranscode:input_type -> video.v1.RetryTranscodeRequest
+	30, // 51: video.v1.VideoService.UpdateVideo:input_type -> video.v1.UpdateVideoFrame
+	28, // 52: video.v1.VideoService.DeleteVideo:input_type -> video.v1.DeleteVideoRequest
+	55, // 53: video.v1.VideoService.GetCollection:input_type -> video.v1.GetCollectionRequest
+	59, // 54: video.v1.VideoService.GetCollectionByVideo:input_type -> video.v1.GetCollectionByVideoRequest
+	61, // 55: video.v1.VideoService.ListCollections:input_type -> video.v1.ListCollectionsRequest
+	63, // 56: video.v1.VideoService.AdminListCollections:input_type -> video.v1.AdminListCollectionsRequest
+	57, // 57: video.v1.VideoService.AdminGetCollection:input_type -> video.v1.AdminGetCollectionRequest
+	65, // 58: video.v1.VideoService.CreateCollection:input_type -> video.v1.CreateCollectionRequest
+	67, // 59: video.v1.VideoService.UpdateCollection:input_type -> video.v1.UpdateCollectionRequest
+	69, // 60: video.v1.VideoService.DeleteCollection:input_type -> video.v1.DeleteCollectionRequest
+	71, // 61: video.v1.VideoService.AddCollectionVideos:input_type -> video.v1.AddCollectionVideosRequest
+	73, // 62: video.v1.VideoService.RemoveCollectionVideo:input_type -> video.v1.RemoveCollectionVideoRequest
+	75, // 63: video.v1.VideoService.ReorderCollectionVideos:input_type -> video.v1.ReorderCollectionVideosRequest
+	33, // 64: video.v1.UploadService.UploadVideo:input_type -> video.v1.UploadVideoFrame
+	36, // 65: video.v1.UploadService.InitUpload:input_type -> video.v1.InitUploadRequest
+	38, // 66: video.v1.UploadService.UploadStatus:input_type -> video.v1.UploadStatusRequest
+	40, // 67: video.v1.UploadService.PresignPart:input_type -> video.v1.PresignPartRequest
+	42, // 68: video.v1.UploadService.PutPart:input_type -> video.v1.PutPartFrame
+	45, // 69: video.v1.UploadService.CompleteUpload:input_type -> video.v1.CompleteUploadRequest
+	47, // 70: video.v1.UploadService.AbortUpload:input_type -> video.v1.AbortUploadRequest
+	49, // 71: video.v1.ReportService.CreateReport:input_type -> video.v1.CreateReportRequest
+	51, // 72: video.v1.ReportService.ListReports:input_type -> video.v1.ListReportsRequest
+	53, // 73: video.v1.ReportService.HandleReport:input_type -> video.v1.HandleReportRequest
+	7,  // 74: video.v1.VideoService.GetVideo:output_type -> video.v1.GetVideoResponse
+	9,  // 75: video.v1.VideoService.GetVideos:output_type -> video.v1.GetVideosResponse
+	11, // 76: video.v1.VideoService.GetVideoInfos:output_type -> video.v1.GetVideoInfosResponse
+	13, // 77: video.v1.VideoService.ListFeedCandidates:output_type -> video.v1.ListFeedCandidatesResponse
+	15, // 78: video.v1.VideoService.ListVideos:output_type -> video.v1.ListVideosResponse
+	17, // 79: video.v1.VideoService.IncrViewCount:output_type -> video.v1.IncrViewCountResponse
+	19, // 80: video.v1.VideoService.GetTranscodeState:output_type -> video.v1.GetTranscodeStateResponse
+	21, // 81: video.v1.VideoService.ReportTranscodeResult:output_type -> video.v1.ReportTranscodeResultResponse
+	23, // 82: video.v1.VideoService.AdminListVideos:output_type -> video.v1.AdminListVideosResponse
+	27, // 83: video.v1.VideoService.UpdateVideoStatus:output_type -> video.v1.UpdateVideoStatusResponse
+	25, // 84: video.v1.VideoService.RetryTranscode:output_type -> video.v1.RetryTranscodeResponse
+	32, // 85: video.v1.VideoService.UpdateVideo:output_type -> video.v1.UpdateVideoResponse
+	29, // 86: video.v1.VideoService.DeleteVideo:output_type -> video.v1.DeleteVideoResponse
+	56, // 87: video.v1.VideoService.GetCollection:output_type -> video.v1.GetCollectionResponse
+	60, // 88: video.v1.VideoService.GetCollectionByVideo:output_type -> video.v1.GetCollectionByVideoResponse
+	62, // 89: video.v1.VideoService.ListCollections:output_type -> video.v1.ListCollectionsResponse
+	64, // 90: video.v1.VideoService.AdminListCollections:output_type -> video.v1.AdminListCollectionsResponse
+	58, // 91: video.v1.VideoService.AdminGetCollection:output_type -> video.v1.AdminGetCollectionResponse
+	66, // 92: video.v1.VideoService.CreateCollection:output_type -> video.v1.CreateCollectionResponse
+	68, // 93: video.v1.VideoService.UpdateCollection:output_type -> video.v1.UpdateCollectionResponse
+	70, // 94: video.v1.VideoService.DeleteCollection:output_type -> video.v1.DeleteCollectionResponse
+	72, // 95: video.v1.VideoService.AddCollectionVideos:output_type -> video.v1.AddCollectionVideosResponse
+	74, // 96: video.v1.VideoService.RemoveCollectionVideo:output_type -> video.v1.RemoveCollectionVideoResponse
+	76, // 97: video.v1.VideoService.ReorderCollectionVideos:output_type -> video.v1.ReorderCollectionVideosResponse
+	35, // 98: video.v1.UploadService.UploadVideo:output_type -> video.v1.UploadVideoResponse
+	37, // 99: video.v1.UploadService.InitUpload:output_type -> video.v1.InitUploadResponse
+	39, // 100: video.v1.UploadService.UploadStatus:output_type -> video.v1.UploadStatusResponse
+	41, // 101: video.v1.UploadService.PresignPart:output_type -> video.v1.PresignPartResponse
+	44, // 102: video.v1.UploadService.PutPart:output_type -> video.v1.PutPartResponse
+	46, // 103: video.v1.UploadService.CompleteUpload:output_type -> video.v1.CompleteUploadResponse
+	48, // 104: video.v1.UploadService.AbortUpload:output_type -> video.v1.AbortUploadResponse
+	50, // 105: video.v1.ReportService.CreateReport:output_type -> video.v1.CreateReportResponse
+	52, // 106: video.v1.ReportService.ListReports:output_type -> video.v1.ListReportsResponse
+	54, // 107: video.v1.ReportService.HandleReport:output_type -> video.v1.HandleReportResponse
+	74, // [74:108] is the sub-list for method output_type
+	40, // [40:74] is the sub-list for method input_type
+	40, // [40:40] is the sub-list for extension type_name
+	40, // [40:40] is the sub-list for extension extendee
+	0,  // [0:40] is the sub-list for field type_name
 }
 
 func init() { file_video_v1_video_proto_init() }

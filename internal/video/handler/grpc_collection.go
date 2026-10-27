@@ -56,18 +56,25 @@ func (s *GRPCVideoServer) AdminGetCollection(ctx context.Context, req *videov1.A
 	return resp, nil
 }
 
-// GetCollectionByVideo 反查视频所属的公开合集，并给出该视频在合集内的 1 基序号。
+// GetCollectionByVideo 返回视频所属的公开合集详情，并给出当前视频在合集内的 1 基序号。
+//
+// detail 为空表示视频不属于任何公开合集；current_index 为 0 表示当前视频不在可见列表中。
 func (s *GRPCVideoServer) GetCollectionByVideo(ctx context.Context, req *videov1.GetCollectionByVideoRequest) (*videov1.GetCollectionByVideoResponse, error) {
-	briefs, err := s.svc.GetCollectionByVideo(ctx, req.GetVideoId())
+	detail, currentIndex, err := s.svc.GetCollectionByVideo(ctx, req.GetVideoId())
 	if err != nil {
 		return nil, grpcerr.Wrap(err)
 	}
 
-	resp := &videov1.GetCollectionByVideoResponse{
-		Collections: make([]*videov1.CollectionBrief, 0, len(briefs)),
-	}
-	for i := range briefs {
-		resp.Collections = append(resp.Collections, toCollectionBriefProto(&briefs[i]))
+	resp := &videov1.GetCollectionByVideoResponse{CurrentIndex: currentIndex}
+	if detail != nil {
+		videos := make([]*videov1.VideoInfo, 0, len(detail.Videos))
+		for i := range detail.Videos {
+			videos = append(videos, toVideoInfoFromDTO(&detail.Videos[i]))
+		}
+		resp.Detail = &videov1.CollectionDetail{
+			Collection: toCollectionInfoProto(&detail.CollectionInfo),
+			Videos:     videos,
+		}
 	}
 	return resp, nil
 }
@@ -223,15 +230,4 @@ func toCollectionInfoProtos(list []dto.CollectionInfo) []*videov1.CollectionInfo
 		out = append(out, toCollectionInfoProto(&list[i]))
 	}
 	return out
-}
-
-// toCollectionBriefProto 把「视频所属合集」DTO 映射为契约结构。
-func toCollectionBriefProto(b *dto.CollectionBrief) *videov1.CollectionBrief {
-	return &videov1.CollectionBrief{
-		Id:           b.ID,
-		Title:        b.Title,
-		CoverUrl:     b.CoverURL,
-		VideoCount:   b.VideoCount,
-		CurrentIndex: int32(b.CurrentIndex),
-	}
 }

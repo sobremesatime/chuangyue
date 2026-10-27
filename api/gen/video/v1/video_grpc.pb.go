@@ -81,7 +81,7 @@ type VideoServiceClient interface {
 	// ---- 合集（跨视频的播放列表）----
 	// GetCollection 读取公开合集详情与有序播放列表；草稿合集在前台等同不存在。
 	GetCollection(ctx context.Context, in *GetCollectionRequest, opts ...grpc.CallOption) (*GetCollectionResponse, error)
-	// GetCollectionByVideo 反查视频所属的公开合集并给出其序号。
+	// GetCollectionByVideo 返回视频所属的公开合集详情与当前视频的序号；无合集时 detail 为空。
 	GetCollectionByVideo(ctx context.Context, in *GetCollectionByVideoRequest, opts ...grpc.CallOption) (*GetCollectionByVideoResponse, error)
 	// ListCollections 公开合集列表（仅 status=1）。
 	ListCollections(ctx context.Context, in *ListCollectionsRequest, opts ...grpc.CallOption) (*ListCollectionsResponse, error)
@@ -390,7 +390,7 @@ type VideoServiceServer interface {
 	// ---- 合集（跨视频的播放列表）----
 	// GetCollection 读取公开合集详情与有序播放列表；草稿合集在前台等同不存在。
 	GetCollection(context.Context, *GetCollectionRequest) (*GetCollectionResponse, error)
-	// GetCollectionByVideo 反查视频所属的公开合集并给出其序号。
+	// GetCollectionByVideo 返回视频所属的公开合集详情与当前视频的序号；无合集时 detail 为空。
 	GetCollectionByVideo(context.Context, *GetCollectionByVideoRequest) (*GetCollectionByVideoResponse, error)
 	// ListCollections 公开合集列表（仅 status=1）。
 	ListCollections(context.Context, *ListCollectionsRequest) (*ListCollectionsResponse, error)
