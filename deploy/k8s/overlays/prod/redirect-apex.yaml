@@ -1,0 +1,61 @@
+# 窗月 · 裸域名 → www 的 301（生产）
+#
+# 为什么需要这一条：`chuangyue.me` 与 `www.chuangyue.me` 都解析到同一个 IP，
+# 若两个域名都直接出内容，登录态 Cookie 会在两套主机名下各存一份——
+# 用户在裸域名登录、跳到 www 操作时会表现为「莫名掉登录」。
+# 因此统一以 www 为唯一入口，裸域名只做一次永久跳转。
+#
+# 为什么保留裸域名而不是删掉 A 记录：备案核验人员通常输入备案系统里登记的
+# 根域名，若根域名打不开会被判定「网站无法访问」。保留 + 301 最稳妥。
+#
+# 实现方式：Traefik Middleware（redirectRegex）+ 一条只在 `host: chuangyue.me`
+# 命中的 Ingress。Traefik 的 host 规则优先级高于 web 那条不带 host 的 catch-all，
+# 所以裸域名一定先命中这里；www 与 IP 直连仍走原有规则，无需改动 ingress.yaml。
+#
+# replacement 用 https：证书由 cert-manager 自动签发（见 cluster-issuer.yaml +
+# ingress.yaml 的 tls 段），443 就绪后裸域名直接跳到 https 的 www。
+# 若集群尚未签出证书（cert-manager 刚装好、首次签发还在进行），这里会暂时跳到
+# 一个还打不开的地址；等 certificate Ready 后即正常，通常 1-2 分钟。
+#
+# 若集群的 Traefik 低于 v2.9（apiVersion 是 traefik.containo.us），把下面的
+# traefik.io/v1alpha1 换成 traefik.containo.us/v1alpha1。
+# 确认命令：kubectl api-resources | grep -i middleware
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-apex
+  namespace: chuangyue
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  redirectRegex:
+    # 只匹配裸域名，路径与查询串原样带到 www
+    regex: "^https?://chuangyue\\.me(.*)"
+    replacement: "https://www.chuangyue.me${1}"
+    permanent: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-apex-redirect
+  namespace: chuangyue
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: chuangyue
+  annotations:
+    # 只在裸域名这条规则上挂重定向，www 与 IP 直连不受影响
+    traefik.ingress.kubernetes.io/router.middlewares: chuangyue-redirect-apex@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: chuangyue.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

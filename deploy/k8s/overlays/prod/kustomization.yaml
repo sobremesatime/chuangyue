@@ -16,6 +16,13 @@ namespace: chuangyue
 resources:
   - ../../base
   - ingress.yaml
+  # 裸域名 → www 的 301：统一入口，避免登录态 Cookie 在两套主机名下分裂
+  - redirect-apex.yaml
+  # Let's Encrypt 签发者 **不在 resources 里**：ClusterIssuer 是集群级资源，
+  # kustomize 的 namespace 转换器会给它强行写上 namespace: chuangyue，apply 时
+  # 会报「cluster-scoped resource must not have a namespace」。
+  # 因此单独应用：kubectl apply -f deploy/k8s/overlays/prod/cluster-issuer.yaml
+  # （幂等，重复执行无副作用；只需在首次部署和改邮箱/签发者时执行）
   # MinIO 的对外入口（路径 /chuangyue → minio-s3:9000）。
   # 与 ../../infra 的 minio.yaml 必须**同时**启用/停用：
   # 只开本体不开入口 → 封面 / 头像的绝对地址 404；

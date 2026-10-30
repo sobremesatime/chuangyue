@@ -1,0 +1,58 @@
+# 窗月 · Let's Encrypt 证书签发者（生产）
+#
+# 为什么用 cert-manager 而不是 certbot：Traefik 已占用 80/443，certbot 的
+# standalone 验证需要独占 80、webroot 又要额外注入路由；cert-manager 作为
+# Ingress 控制器生态的一员，用 HTTP-01 临时 Ingress 应答 /.well-known/acme-challenge
+# 即可，签完把证书写进 Secret，Traefik 直接读取，续期也全自动。
+#
+# HTTP-01 的前提：域名已解析到本集群，且 80 端口对外可达（当前已满足）。
+# 不需要阿里云 DNS API 权限，也不用泛域名证书。
+#
+# 首次调试建议先用 staging（同文件末尾的注释块）：staging 不受速率限制，
+# 但签出来的证书浏览器不信任。确认流程通了再切回 letsencrypt-prod，
+# 避免触发「同一组域名每周 5 次重复签发」的限流，被限流要等 7 天。
+#
+# 安装本体（一次性，宿主机执行）：
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+#   kubectl -n cert-manager get pods    # 三个 Pod 均 Running
+#
+# 本文件不在 kustomization 的 resources 里（ClusterIssuer 是集群级资源，
+# namespace 转换器会强行加 namespace 导致 apply 失败），需单独应用：
+#   kubectl apply -f deploy/k8s/overlays/prod/cluster-issuer.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app.kubernetes.io/part-of: chuangyue
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # 仅用于证书到期 / 吊销通知，公开可见，不要填敏感地址
+    email: talonjxufecs@163.com
+    # ACME 账户私钥的存放位置，由 cert-manager 自动创建
+    privateKeySecretRef:
+      name: letsencrypt-prod-account
+    solvers:
+      - http01:
+          ingress:
+            # 与 web 的 Ingress 使用同一个控制器（k3s 自带 Traefik）
+            ingressClassName: traefik
+---
+# 调试用 staging 签发者：证书不被浏览器信任，但不占速率额度。
+# 用的时候把 Ingress 注解临时改成 cert-manager.io/cluster-issuer: letsencrypt-staging，
+# 验证通过后改回 letsencrypt-prod 并删掉 letsencrypt-prod 对应的旧 secret 重签。
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-staging
+# spec:
+#   acme:
+#     server: https://acme-staging-v02.api.letsencrypt.org/directory
+#     email: talonjxufecs@163.com
+#     privateKeySecretRef:
+#       name: letsencrypt-staging-account
+#     solvers:
+#       - http01:
+#           ingress:
+#             ingressClassName: traefik

@@ -2,15 +2,21 @@
 #
 # 全站只有一个对外入口：**接入层 web（Nginx）**。它托管前端静态资源，
 # 并把 /api 与 /uploads 反代给集群内的网关；网关自身不再对外暴露。
-# 因此这里指向的是 web，而不是 gateway。
 #
 # 为什么用 traefik：k3s 自带 Traefik 作为 Ingress Controller，并以 LoadBalancer 形式
 # 占用节点的 80/443。清单若写 nginx 或再给 web 建 LoadBalancer，都会拿不到入口
 # （前者无控制器接管，后者与 Traefik 抢端口）。用 traefik 即「复用 k3s 自带的大门」。
 #
-# 为什么暂时不写 host：当前阶段用 **IP 直连**验收（阶段八），浏览器发出的 Host 是节点 IP，
-# 与占位域名不匹配会被 Traefik 返回 404。去掉 host 即 catch-all，任意 Host 都能进来。
-# 阶段十挂域名时再补回 `host` 与 `tls`（见文件末尾注释），届时按域名精确路由。
+# 域名策略（阶段十）：**www 是唯一规范入口**。
+#   - `www.chuangyue.me` 由本 Ingress 直接出内容（host 规则）
+#   - `chuangyue.me` 由 redirect-apex.yaml 做 301 → www，避免登录态 Cookie 在两个
+#     主机名下各存一份（根域名保留是因为备案核验人员会输入根域名）
+#   - 不带 host 的 catch-all 规则保留：IP 直连仍可用于验收；Traefik 中 host 规则
+#     优先级高于 catch-all，不会互相抢
+#
+# 证书：cert-manager（HTTP-01）自动签发，一张证书同时覆盖 www 与根域名。
+# 因此 tls.hosts 列两个名字，secret 由 cert-manager 写入 `chuangyue-tls`。
+# 注意 Refresh Token 的 Cookie 是 Secure，必须走 HTTPS 才带得上。
 #
 # 关于上传体积：原来 nginx ingress 的 proxy-body-size 是为「默认 1MB 限制」兜底的；
 # Traefik 默认不限制请求体大小，因此这里不再需要等价注解，也不会 413。
@@ -21,12 +27,30 @@ metadata:
   labels:
     app.kubernetes.io/name: web
     app.kubernetes.io/part-of: chuangyue
+  annotations:
+    # 触发 cert-manager 自动申请 / 续期；证书写入下方 tls.secretName
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: traefik
+  tls:
+    - hosts:
+        - www.chuangyue.me
+        - chuangyue.me
+      secretName: chuangyue-tls
   rules:
-    # 不写 host：匹配任意 Host（含直接用节点 IP 访问）。
-    # 挂域名后改成：
-    #   - host: chuangyue.me
+    # 规范入口：www
+    - host: www.chuangyue.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    # 不带 host：匹配任意 Host（含直接用节点 IP 访问），仅用于 IP 直连验收。
+    # 域名的请求会先命中上面的 host 规则，不会落到这里。
     - http:
         paths:
           - path: /
@@ -36,10 +60,3 @@ spec:
                 name: web
                 port:
                   name: http
-  # 启用 HTTPS 时取消注释并配置证书（证书在腾讯云控制台申请，手工导入成 Secret `chuangyue-tls`，
-  # 不装 cert-manager；完整步骤见《部署计划》阶段十）。
-  # 注意 Refresh Token 的 Cookie 是 Secure，生产必须走 HTTPS 才带得上。
-  # tls:
-  #   - hosts:
-  #       - chuangyue.me
-  #     secretName: chuangyue-tls
