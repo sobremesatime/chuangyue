@@ -19,11 +19,19 @@ const isDev = import.meta.env.DEV
 /** 业务错误：统一携带错误码与提示信息，页面直接展示 message 即可 */
 export class ApiError extends Error {
   readonly code: number
+  /**
+   * 原始 HTTP 状态码（0 表示请求未到达服务端）。
+   *
+   * 必须与业务 code 分开存：业务码是五位（如 20002 密码错误），
+   * 单看数值会把「密码错误」误判成 5xx 服务故障。
+   */
+  readonly httpStatus: number
 
-  constructor(code: number, message: string) {
+  constructor(code: number, message: string, httpStatus = 0) {
     super(message)
     this.name = 'ApiError'
     this.code = code
+    this.httpStatus = httpStatus
   }
 }
 
@@ -117,13 +125,15 @@ http.interceptors.response.use(
       } catch {
         clearAccessToken()
         return Promise.reject(
-          new ApiError(response.status, response.data?.message || '登录已过期，请重新登录'),
+          new ApiError(response.status, response.data?.message || '登录已过期，请重新登录', response.status),
         )
       }
     }
 
     const message = response.data?.message || error.message || '请求失败'
-    return Promise.reject(new ApiError(response.data?.code ?? response.status, message))
+    return Promise.reject(
+      new ApiError(response.data?.code ?? response.status, message, response.status),
+    )
   },
 )
 
@@ -139,7 +149,7 @@ export function toErrorMessage(err: unknown): string {
     if (err.code === -1) {
       return isDev ? err.message : '网络连接异常，请稍后重试'
     }
-    if (err.code >= 500) {
+    if (err.httpStatus >= 500) {
       return isDev ? err.message : '服务暂时不可用，请稍后重试'
     }
     return err.message
