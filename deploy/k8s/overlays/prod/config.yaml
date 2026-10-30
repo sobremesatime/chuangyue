@@ -102,10 +102,11 @@ upload:
     use_ssl: false
     region: us-east-1
     # 浏览器直接访问的地址：封面 / 头像会以它拼成绝对 URL 返回。
-    # 走 Traefik 的 80——minio-ingress.yaml 把 /chuangyue 转发到 minio-s3:9000，
-    # 因此不需要额外暴露节点 IP 或 9000 端口，Pod 换节点也不影响这个地址。
-    # 绑定域名并上 HTTPS 后改成 https://<域名>/chuangyue。
-    public_url: "http://111.230.240.121/chuangyue"
+    # 必须是 https + 规范入口域名：页面已上 HTTPS，任何 http 绝对地址都会
+    # 被浏览器按 Mixed Content 拦截（缩略图、头像全不显示）。
+    # 路径仍走 /chuangyue——minio-ingress.yaml 把该前缀转发到 minio-s3:9000；
+    # 不能用 /uploads，那个前缀是网关托管的「本地 HLS 目录」，与 MinIO 对象无关。
+    public_url: "https://www.chuangyue.me/chuangyue"
 
 kafka:
   brokers: ["kafka:9092"]

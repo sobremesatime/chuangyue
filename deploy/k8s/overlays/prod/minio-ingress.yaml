@@ -14,7 +14,10 @@
 # 路径与桶名天然对齐：MinIO 的 S3 是 path-style（/bucket/key），桶名就是
 # chuangyue，所以 /chuangyue 前缀直接透传即可，**不要加 rewrite / stripPrefix**。
 #
-# 挂域名后无需改动本文件：Traefik 仍按最长前缀匹配，域名只影响 ingress.yaml 的 host。
+# 挂域名后**需要改一次**：见下方 host 规则。Traefik 按规则字符串长度决定优先级，
+# 一旦 web 的 Ingress 出现 `Host(www.chuangyue.me) && PathPrefix(/)`，这条例更长，
+# 会把该域名下所有路径（含 /chuangyue）都拉到 web 容器；因此这里必须补一条带 host
+# 的规则，才能让媒体对象继续直达 minio。
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -25,6 +28,17 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
+    # 规范入口域名下的媒体路径：显式 host，规则更长 → 优先于 web 的 host 规则。
+    - host: www.chuangyue.me
+      http:
+        paths:
+          - path: /chuangyue
+            pathType: Prefix
+            backend:
+              service:
+                name: minio-s3
+                port:
+                  name: s3
     # 不写 host：与 web 的 Ingress 一样是 catch-all，IP 直连与域名都能进。
     # 注意不写 host 时，两个 Ingress 共用同一组入口，由 Traefik 按路径长度择优：
     # /chuangyue（更长）优先于 /，其余请求仍落到 web。
